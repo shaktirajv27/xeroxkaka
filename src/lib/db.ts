@@ -188,7 +188,23 @@ export const db = {
     return state.shops.filter((s) => s.is_active);
   },
 
+  getCachedShops(): Shop[] {
+    const state = loadLocalState();
+    return state.shops.filter((s) => s.is_active);
+  },
+
   async updateShop(id: string, updates: Partial<Shop>): Promise<Shop | null> {
+    // 1. Immediate synchronous local cache update (< 1ms)
+    const state = loadLocalState();
+    const idx = state.shops.findIndex((s) => s.id === id);
+    let updatedShop: Shop | null = null;
+    if (idx !== -1) {
+      state.shops[idx] = { ...state.shops[idx], ...updates, updated_at: new Date().toISOString() };
+      saveLocalState(state);
+      updatedShop = state.shops[idx];
+    }
+
+    // 2. Direct Supabase update
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
@@ -197,19 +213,21 @@ export const db = {
           .eq('id', id)
           .select()
           .single();
-        if (!error && data) return data as Shop;
+        if (!error && data) {
+          const syncState = loadLocalState();
+          const syncIdx = syncState.shops.findIndex((s) => s.id === id);
+          if (syncIdx !== -1) {
+            syncState.shops[syncIdx] = data as Shop;
+            saveLocalState(syncState);
+          }
+          return data as Shop;
+        }
       } catch (err) {
         console.warn('Supabase updateShop fallback', err);
       }
     }
 
-    const state = loadLocalState();
-    const idx = state.shops.findIndex((s) => s.id === id);
-    if (idx === -1) return null;
-
-    state.shops[idx] = { ...state.shops[idx], ...updates, updated_at: new Date().toISOString() };
-    saveLocalState(state);
-    return state.shops[idx];
+    return updatedShop;
   },
 
   // PRICING RULES
@@ -283,6 +301,39 @@ export const db = {
     saveLocalState(state);
   },
 
+  async updatePricingRulesBatch(shopId: string, rules: PricingRule[]): Promise<void> {
+    // 1. Instant synchronous local cache update (< 1ms)
+    const state = loadLocalState();
+    const otherRules = state.pricing_rules.filter((r) => r.shop_id !== shopId);
+    const updatedRules = rules.map((r) => ({
+      ...r,
+      shop_id: shopId,
+      price_per_page: Number(r.price_per_page),
+      updated_at: new Date().toISOString(),
+    }));
+    state.pricing_rules = [...otherRules, ...updatedRules];
+    saveLocalState(state);
+
+    // 2. Single batch upsert in Supabase (1 roundtrip instead of 20)
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const payload = updatedRules.map((r) => ({
+          shop_id: r.shop_id,
+          paper_size: r.paper_size,
+          print_color: r.print_color,
+          print_side: r.print_side,
+          price_per_page: r.price_per_page,
+          updated_at: r.updated_at,
+        }));
+        await supabase
+          .from('pricing_rules')
+          .upsert(payload, { onConflict: 'shop_id,paper_size,print_color,print_side' });
+      } catch (err) {
+        console.warn('Supabase updatePricingRulesBatch fallback', err);
+      }
+    }
+  },
+
   // SERVICES
   async getShopServices(shopId: string): Promise<ShopService[]> {
     if (isSupabaseConfigured && supabase) {
@@ -333,6 +384,28 @@ export const db = {
       state.shop_services.push({ ...service, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     }
     saveLocalState(state);
+  },
+
+  async updateShopServicesBatch(shopId: string, services: ShopService[]): Promise<void> {
+    // 1. Instant synchronous local cache update (< 1ms)
+    const state = loadLocalState();
+    const otherServices = state.shop_services.filter((s) => s.shop_id !== shopId);
+    const updatedServices = services.map((s) => ({
+      ...s,
+      shop_id: shopId,
+      updated_at: new Date().toISOString(),
+    }));
+    state.shop_services = [...otherServices, ...updatedServices];
+    saveLocalState(state);
+
+    // 2. Single batch upsert in Supabase (1 roundtrip)
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('shop_services').upsert(updatedServices);
+      } catch (err) {
+        console.warn('Supabase updateShopServicesBatch fallback', err);
+      }
+    }
   },
 
   // SHOP SETTINGS

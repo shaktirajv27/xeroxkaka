@@ -59,18 +59,10 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
     setIsSaving(true);
     setSavedSuccess(false);
     try {
-      for (const r of localRules) {
-        await db.updatePricingRule({
-          shop_id: shopId,
-          paper_size: r.paper_size,
-          print_color: r.print_color,
-          print_side: r.print_side,
-          price_per_page: Number(r.price_per_page),
-        });
-      }
+      await db.updatePricingRulesBatch(shopId, localRules);
       setSavedSuccess(true);
       onRefresh();
-      setTimeout(() => setSavedSuccess(false), 3000);
+      setTimeout(() => setSavedSuccess(false), 2500);
     } catch (err) {
       console.error('Failed to update pricing rules', err);
     } finally {

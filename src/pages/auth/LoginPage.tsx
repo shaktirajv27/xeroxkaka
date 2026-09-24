@@ -148,11 +148,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialTab = 'login', onLo
 
         {/* Brand Header */}
         <div className="text-center">
-          <div className="w-13 h-13 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-2xl mx-auto shadow-md shadow-indigo-200 mb-3.5">
-            X
+          <div className="h-12 px-3 rounded-2xl bg-white flex items-center justify-center mx-auto shadow-md border border-slate-100 mb-3.5 w-fit">
+            <img src="/logo.png" alt="PrintSetu" className="h-8 w-auto object-contain" />
           </div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-            Shop Owner & Partner Portal
+            PrintSetu Cockpit Portal
           </h1>
           <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
             Manage your live print queue, automated rate card, and customer counter collections.

@@ -2,31 +2,48 @@ import React, { useState, useEffect } from 'react';
 import { Shop, PricingRule, ShopService } from '../../types/database';
 import { db } from '../../lib/db';
 import { ProcessedUpload, uploadOrderFile } from '../../lib/storage';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { ItemCalculationInput, calculateOrderSummary } from '../../lib/priceEngine';
+import { calculateOrderSummary, ItemCalculationInput } from '../../lib/priceEngine';
 import { FileUploader } from '../../components/customer/FileUploader';
 import { FileCard } from '../../components/customer/FileCard';
 import { CustomerDetailsForm } from '../../components/customer/CustomerDetailsForm';
 import { PriceBreakdown } from '../../components/customer/PriceBreakdown';
 import { FilePreviewModal } from '../../components/customer/FilePreviewModal';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
-import { ShieldCheck, MapPin, Phone, ArrowRight, Printer, AlertCircle } from 'lucide-react';
+import {
+  ShieldCheck,
+  MapPin,
+  Phone,
+  ArrowRight,
+  Printer,
+  AlertCircle,
+  Store,
+  ChevronDown,
+  X,
+  Search,
+} from 'lucide-react';
 
 interface ShopOrderPageProps {
   shopSlug: string;
   onOrderPlaced: (orderNumber: string, customerPhone: string) => void;
   onNavigateHome: () => void;
+  onSelectShop?: (slug: string) => void;
 }
 
 export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
   shopSlug,
   onOrderPlaced,
   onNavigateHome,
+  onSelectShop,
 }) => {
   const [shop, setShop] = useState<Shop | null>(null);
+  const [allShops, setAllShops] = useState<Shop[]>(() => db.getCachedShops());
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [services, setServices] = useState<ShopService[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Shop Switcher Modal State
+  const [isShopSwitcherOpen, setIsShopSwitcherOpen] = useState(false);
+  const [shopSearch, setShopSearch] = useState('');
 
   // Order State
   const [uploadedItems, setUploadedItems] = useState<{
@@ -49,7 +66,13 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     async function loadShopData() {
       setIsLoading(true);
       try {
-        const foundShop = await db.getShopBySlug(shopSlug);
+        const [foundShop, liveShops] = await Promise.all([
+          db.getShopBySlug(shopSlug),
+          db.getAllShops(),
+        ]);
+
+        setAllShops(liveShops);
+
         if (foundShop) {
           setShop(foundShop);
           const [rules, svcs] = await Promise.all([
@@ -84,6 +107,28 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     }));
 
     setUploadedItems((prev) => [...prev, ...newItems]);
+
+    // Background upload files immediately for sub-200ms submission experience!
+    if (shop) {
+      newUploads.forEach(async (up) => {
+        try {
+          const uploadedPath = await uploadOrderFile(up.file, up.storage_path, shop.slug);
+          if (uploadedPath) {
+            up.storage_path = uploadedPath;
+            if (!uploadedPath.startsWith('blob:')) {
+              const supabaseUrl =
+                (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
+                'https://rjlfuefvovyqflctqvis.supabase.co';
+              up.preview_url = uploadedPath.startsWith('http')
+                ? uploadedPath
+                : `${supabaseUrl}/storage/v1/object/public/order-documents/${uploadedPath}`;
+            }
+          }
+        } catch (e) {
+          console.warn('Background upload notice:', e);
+        }
+      });
+    }
   };
 
   const handleUpdateConfig = (index: number, newConfig: ItemCalculationInput) => {
@@ -134,30 +179,31 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     setIsSubmitting(true);
 
     try {
-      // Upload physical documents to storage bucket
+      // Ensure any pending uploads are completed in parallel
       await Promise.all(
         uploadedItems.map(async (item) => {
-          try {
-            const uploadedPath = await uploadOrderFile(item.upload.file, item.upload.storage_path, shop.slug);
-            if (uploadedPath) {
-              item.upload.storage_path = uploadedPath;
-              // Ensure remote preview_url is accessible across all devices (shop PC, counter phone)
-              if (!uploadedPath.startsWith('blob:')) {
-                const supabaseUrl =
-                  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
-                  'https://rjlfuefvovyqflctqvis.supabase.co';
-                item.upload.preview_url = uploadedPath.startsWith('http')
-                  ? uploadedPath
-                  : `${supabaseUrl}/storage/v1/object/public/order-documents/${uploadedPath}`;
+          if (!item.upload.storage_path || item.upload.storage_path.startsWith('blob:')) {
+            try {
+              const uploadedPath = await uploadOrderFile(item.upload.file, item.upload.storage_path, shop.slug);
+              if (uploadedPath) {
+                item.upload.storage_path = uploadedPath;
+                if (!uploadedPath.startsWith('blob:')) {
+                  const supabaseUrl =
+                    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
+                    'https://rjlfuefvovyqflctqvis.supabase.co';
+                  item.upload.preview_url = uploadedPath.startsWith('http')
+                    ? uploadedPath
+                    : `${supabaseUrl}/storage/v1/object/public/order-documents/${uploadedPath}`;
+                }
               }
+            } catch (e) {
+              console.warn('File upload finalize notice:', e);
             }
-          } catch (e) {
-            console.warn('File upload notice:', e);
           }
         })
       );
 
-      // Recalculate trusted prices on backend / db layer
+      // Create order with real instant local state write + Supabase sync
       const createdOrder = await db.createOrder({
         shop_id: shop.id,
         customer_name: customerName,
@@ -212,85 +258,152 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     }
   };
 
+  const handleSelectDifferentShop = (slug: string) => {
+    setIsShopSwitcherOpen(false);
+    if (onSelectShop) {
+      onSelectShop(slug);
+    } else {
+      window.location.href = `/s/${slug}`;
+    }
+  };
+
   if (isLoading) {
-    return <LoadingSpinner fullScreen message="Loading print shop..." />;
+    return <LoadingSpinner fullScreen message="Loading print center details..." />;
   }
 
+  // Shop Not Found - User friendly directory
   if (!shop) {
     return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-500 flex items-center justify-center mb-4">
-          <AlertCircle className="w-8 h-8" />
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 text-center">
+        <div className="max-w-md w-full bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+            <Store className="w-7 h-7" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800">Print Shop Not Found</h2>
+          <p className="text-xs text-slate-500">
+            The URL "{shopSlug}" is not registered. Please choose one of our active partner print centers below:
+          </p>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto pt-2 text-left">
+            {allShops.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleSelectDifferentShop(s.slug)}
+                className="w-full p-3 rounded-2xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50/50 flex items-center justify-between transition-colors cursor-pointer"
+              >
+                <div>
+                  <h4 className="font-bold text-xs text-slate-900">{s.shop_name}</h4>
+                  <p className="text-[11px] text-slate-500">{s.city} • {s.address}</p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-sky-600" />
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={onNavigateHome}
+            className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            Go to Home
+          </button>
         </div>
-        <h2 className="text-xl font-bold text-slate-800">Shop Not Found</h2>
-        <p className="text-sm text-slate-500 max-w-sm mt-1 mb-6">
-          The print shop URL "{shopSlug}" does not exist or has been deactivated.
-        </p>
-        <button
-          onClick={onNavigateHome}
-          className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold"
-        >
-          Go to Home
-        </button>
       </div>
     );
   }
 
+  const filteredShopsList = allShops.filter((s) => {
+    if (!shopSearch.trim()) return true;
+    const q = shopSearch.toLowerCase();
+    return (
+      s.shop_name?.toLowerCase().includes(q) ||
+      s.city?.toLowerCase().includes(q) ||
+      s.address?.toLowerCase().includes(q)
+    );
+  });
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-24 sm:pb-12">
-      {/* Top Shop Banner */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-lg shadow-xs">
-              X
-            </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
-                {shop.shop_name}
-              </h1>
-              <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                <MapPin className="w-3 h-3 text-slate-400" />
-                <span className="truncate max-w-[200px] sm:max-w-xs">{shop.address}, {shop.city}</span>
+    <div className="min-h-screen bg-slate-50 pb-28 sm:pb-12 text-slate-900 font-sans">
+      {/* Top Header with PrintSetu Brand & Shop Selector */}
+      <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+        <div className="max-w-3xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={onNavigateHome}
+              className="h-8 px-1.5 rounded-lg bg-white flex items-center justify-center border border-slate-100 shrink-0 cursor-pointer"
+              title="Home"
+            >
+              <img src="/logo.png" alt="PrintSetu" className="h-5 w-auto object-contain" />
+            </button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                  {shop.shop_name}
+                </h1>
+                <span className="shrink-0 px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase tracking-wider">
+                  Live
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-slate-500 truncate">
+                <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                <span className="truncate">{shop.address}, {shop.city}</span>
               </div>
             </div>
           </div>
 
-          <a
-            href={`tel:${shop.phone}`}
-            className="flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-indigo-600 bg-slate-100 px-3 py-1.5 rounded-xl transition-colors"
-          >
-            <Phone className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Call Shop</span>
-          </a>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Change Shop Button */}
+            <button
+              type="button"
+              onClick={() => setIsShopSwitcherOpen(true)}
+              className="flex items-center gap-1 text-[11px] font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer"
+            >
+              <Store className="w-3 h-3" />
+              <span className="hidden sm:inline">Change Shop</span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+
+            {shop.phone && (
+              <a
+                href={`tel:${shop.phone}`}
+                className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 px-2.5 py-1.5 rounded-xl transition-colors"
+              >
+                <Phone className="w-3 h-3" />
+                <span className="hidden sm:inline">Call</span>
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-2xl mx-auto px-4 py-5 space-y-5">
         {/* Welcome Card */}
-        <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
+        <div className="bg-gradient-to-br from-slate-900 via-sky-950 to-blue-950 rounded-3xl p-5 sm:p-6 text-white shadow-lg relative overflow-hidden">
           <div className="relative z-10">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/30 border border-indigo-400/30 text-[11px] font-bold text-indigo-200 uppercase tracking-wide mb-3">
-              <Printer className="w-3.5 h-3.5" /> Direct Counter Print
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-500/20 border border-sky-400/30 text-[10px] font-bold text-sky-200 uppercase tracking-wide mb-2.5">
+              <Printer className="w-3 h-3 text-sky-400" /> Direct Counter Print Queue
             </div>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
-              Send your files for printing
+            <h2 className="text-lg sm:text-xl font-black tracking-tight leading-snug">
+              Instant Online Print Order
             </h2>
-            <p className="text-xs sm:text-sm text-indigo-100 mt-1 max-w-md">
-              Upload your documents, choose color and copies, and collect your prints at the counter when ready.
+            <p className="text-xs text-sky-100 mt-1 max-w-md">
+              Upload documents, select color and copies, and pick up your prints at the counter in minutes.
             </p>
           </div>
-          <div className="absolute -right-6 -bottom-6 w-36 h-36 rounded-full bg-indigo-500/20 blur-2xl pointer-events-none" />
+          <div className="absolute -right-6 -bottom-6 w-36 h-36 rounded-full bg-sky-500/20 blur-2xl pointer-events-none" />
         </div>
 
         {/* 1. File Uploader */}
-        <section className="space-y-3">
+        <section className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              1. Upload Documents
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-4 h-4 rounded-full bg-sky-100 text-sky-600 text-[10px] flex items-center justify-center font-bold">1</span>
+              Upload Documents
             </h3>
-            <span className="text-xs text-slate-500">{uploadedItems.length} files selected</span>
+            <span className="text-[11px] text-slate-500 font-medium">{uploadedItems.length} files selected</span>
           </div>
 
           <FileUploader shopSlug={shop.slug} onFilesSelected={handleFilesAdded} />
@@ -298,15 +411,16 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
 
         {/* 2. Uploaded Files & Print Options */}
         {uploadedItems.length > 0 && (
-          <section className="space-y-3">
+          <section className="space-y-2.5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-                2. Configure Print Options
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-sky-100 text-sky-600 text-[10px] flex items-center justify-center font-bold">2</span>
+                Configure Print Options
               </h3>
-              <span className="text-xs text-indigo-600 font-semibold">Tap Configure to change options</span>
+              <span className="text-[11px] text-sky-600 font-semibold">Tap to customize</span>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {uploadedItems.map((item, idx) => (
                 <FileCard
                   key={idx}
@@ -323,9 +437,10 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
         )}
 
         {/* 3. Customer Information Form */}
-        <section className="space-y-3">
-          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-            3. Customer Details
+        <section className="space-y-2.5">
+          <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="w-4 h-4 rounded-full bg-sky-100 text-sky-600 text-[10px] flex items-center justify-center font-bold">3</span>
+            Customer Details
           </h3>
           <CustomerDetailsForm
             name={customerName}
@@ -340,42 +455,42 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
 
         {/* 4. Price Breakdown */}
         {uploadedItems.length > 0 && (
-          <section className="space-y-3">
+          <section className="space-y-2.5">
             <PriceBreakdown summary={summary} />
           </section>
         )}
 
         {/* Error Alert */}
         {submitError && (
-          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5">
+          <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
             <span>{submitError}</span>
           </div>
         )}
 
         {/* Privacy & Trust Note */}
-        <div className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
+        <div className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5 pt-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>Your files are private and used only for this print order.</span>
+          <span>Files are safely processed and retained only for printing.</span>
         </div>
       </main>
 
       {/* Sticky Bottom Bar on Mobile */}
-      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200 p-4 z-40 shadow-lg sm:static sm:bg-transparent sm:border-0 sm:shadow-none sm:p-0 sm:max-w-2xl sm:mx-auto">
-        <div className="flex items-center justify-between gap-4 max-w-2xl mx-auto">
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200 p-3 sm:p-4 z-40 shadow-lg sm:static sm:bg-transparent sm:border-0 sm:shadow-none sm:p-0 sm:max-w-2xl sm:mx-auto">
+        <div className="flex items-center justify-between gap-3 max-w-2xl mx-auto">
           <div>
-            <span className="text-[11px] text-slate-400 block font-medium">Estimated Total</span>
-            <span className="text-xl font-black text-slate-900">₹{summary.total}</span>
+            <span className="text-[10px] text-slate-400 block font-medium">Total Amount</span>
+            <span className="text-lg sm:text-xl font-black text-slate-900">₹{summary.total}</span>
           </div>
 
           <button
             type="button"
             onClick={handleSubmitOrder}
             disabled={isSubmitting || uploadedItems.length === 0}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-bold rounded-2xl shadow-md disabled:opacity-50 disabled:pointer-events-none transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 sm:px-8 py-3 bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white text-xs sm:text-sm font-bold rounded-2xl shadow-md disabled:opacity-50 disabled:pointer-events-none transition-all cursor-pointer"
           >
             {isSubmitting ? (
-              <span>Submitting Order...</span>
+              <span>Placing Order in milliseconds...</span>
             ) : (
               <>
                 <span>Place Print Order</span>
@@ -385,6 +500,69 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Modal: Switch Print Shop Selector */}
+      {isShopSwitcherOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-5 space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Store className="w-4 h-4 text-sky-600" />
+                <h3 className="font-bold text-sm text-slate-900">Choose a Print Shop</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShopSwitcherOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search shop or city..."
+                value={shopSearch}
+                onChange={(e) => setShopSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
+              />
+            </div>
+
+            <div className="space-y-2 overflow-y-auto flex-1 pr-1">
+              {filteredShopsList.map((s) => {
+                const isSelected = s.slug === shop.slug;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleSelectDifferentShop(s.slug)}
+                    className={`w-full p-3 rounded-2xl border text-left flex items-center justify-between transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'border-sky-500 bg-sky-50/60 ring-1 ring-sky-500'
+                        : 'border-slate-200 hover:border-sky-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-slate-900">{s.shop_name}</span>
+                        {isSelected && (
+                          <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.2 rounded-full">
+                            Current
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{s.city} • {s.address}</p>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* File Preview Modal */}
       <FilePreviewModal upload={previewUpload} onClose={() => setPreviewUpload(null)} />

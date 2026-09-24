@@ -91,9 +91,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (session?.user) {
         // Active user session verified
-        const [profileRes, shopsRes] = await Promise.all([
+        const [profileRes, ownerShopsRes] = await Promise.all([
           supabase.from('profiles').select('*').eq('user_id', session.user.id).single(),
-          supabase.from('shops').select('*').eq('is_active', true),
+          supabase.from('shops').select('*').eq('owner_id', session.user.id).eq('is_active', true),
         ]);
 
         const verifiedProfile: Profile = profileRes.data || {
@@ -105,16 +105,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updated_at: new Date().toISOString(),
         };
 
-        const activeShops: Shop[] = (shopsRes.data as Shop[]) || [];
+        let myShops: Shop[] = (ownerShopsRes.data as Shop[]) || [];
+        // Fallback for pre-existing shops matching owner email
+        if (myShops.length === 0 && session.user.email) {
+          const { data: emailShops } = await supabase
+            .from('shops')
+            .select('*')
+            .eq('email', session.user.email)
+            .eq('is_active', true);
+          if (emailShops && emailShops.length > 0) {
+            myShops = emailShops as Shop[];
+            // Link owner_id for future fast lookups
+            await supabase
+              .from('shops')
+              .update({ owner_id: session.user.id })
+              .eq('id', myShops[0].id);
+          }
+        }
+
         const savedShopId = localStorage.getItem(ACTIVE_SHOP_ID_KEY);
         const userShop =
-          activeShops.find((s) => s.owner_id === session.user.id) ||
-          activeShops.find((s) => s.id === savedShopId) ||
-          activeShops[0] ||
+          myShops.find((s) => s.id === savedShopId) ||
+          myShops[0] ||
           null;
 
         setUser(verifiedProfile);
-        setAllUserShops(activeShops);
+        setAllUserShops(myShops);
         if (userShop) {
           setCurrentShop(userShop);
           localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(userShop));
@@ -122,25 +138,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         localStorage.setItem(CACHED_USER_KEY, JSON.stringify(verifiedProfile));
-        localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(activeShops));
+        localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(myShops));
       } else {
         // No active Supabase session
-        const hadSavedUser = localStorage.getItem(CACHED_USER_KEY);
-        if (hadSavedUser) {
-          // Cached session is expired or logged out
-          setUser(null);
-          localStorage.removeItem(CACHED_USER_KEY);
-        }
-        // Still load available shops so public storefronts work seamlessly
-        const { data: shops } = await supabase.from('shops').select('*').eq('is_active', true);
-        if (shops && shops.length > 0) {
-          setAllUserShops(shops as Shop[]);
-          localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(shops));
-          if (!currentShop) {
-            setCurrentShop(shops[0] as Shop);
-            localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(shops[0]));
-          }
-        }
+        setUser(null);
+        setCurrentShop(null);
+        setAllUserShops([]);
+        localStorage.removeItem(CACHED_USER_KEY);
+        localStorage.removeItem(CACHED_SHOP_KEY);
+        localStorage.removeItem(ACTIVE_SHOP_ID_KEY);
+        localStorage.removeItem(CACHED_ALL_SHOPS_KEY);
       }
     } catch (err) {
       console.warn('Background session reconciliation notice:', err);
@@ -161,9 +168,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (authData?.user) {
-          const [profileRes, shopsRes] = await Promise.all([
+          const [profileRes, ownerShopsRes] = await Promise.all([
             supabase.from('profiles').select('*').eq('user_id', authData.user.id).single(),
-            supabase.from('shops').select('*').eq('is_active', true),
+            supabase.from('shops').select('*').eq('owner_id', authData.user.id).eq('is_active', true),
           ]);
 
           const profile: Profile = profileRes.data || {
@@ -175,15 +182,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updated_at: new Date().toISOString(),
           };
 
-          const shops: Shop[] = (shopsRes.data as Shop[]) || [];
-          const matchedShop =
-            shops.find((s) => s.owner_id === authData.user.id) ||
-            shops.find((s) => s.email?.toLowerCase() === email.toLowerCase()) ||
-            shops[0] ||
-            null;
+          let myShops: Shop[] = (ownerShopsRes.data as Shop[]) || [];
+          if (myShops.length === 0 && authData.user.email) {
+            const { data: emailShops } = await supabase
+              .from('shops')
+              .select('*')
+              .eq('email', authData.user.email)
+              .eq('is_active', true);
+            if (emailShops && emailShops.length > 0) {
+              myShops = emailShops as Shop[];
+              await supabase
+                .from('shops')
+                .update({ owner_id: authData.user.id })
+                .eq('id', myShops[0].id);
+            }
+          }
+
+          const matchedShop = myShops[0] || null;
 
           setUser(profile);
-          setAllUserShops(shops);
+          setAllUserShops(myShops);
           if (matchedShop) {
             setCurrentShop(matchedShop);
             localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(matchedShop));
@@ -191,7 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           localStorage.setItem(CACHED_USER_KEY, JSON.stringify(profile));
-          localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(shops));
+          localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(myShops));
           return true;
         }
       }
@@ -299,11 +317,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setUser(profile);
         setCurrentShop(newShop);
-        setAllUserShops((prev) => [newShop, ...prev]);
+        setAllUserShops([newShop]);
 
         localStorage.setItem(CACHED_USER_KEY, JSON.stringify(profile));
         localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(newShop));
         localStorage.setItem(ACTIVE_SHOP_ID_KEY, newShop.id);
+        localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify([newShop]));
         return true;
       }
 
@@ -338,10 +357,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setUser(newProfile);
       setCurrentShop(newShop);
-      setAllUserShops((prev) => [newShop, ...prev]);
+      setAllUserShops([newShop]);
       localStorage.setItem(CACHED_USER_KEY, JSON.stringify(newProfile));
       localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(newShop));
       localStorage.setItem(ACTIVE_SHOP_ID_KEY, newShop.id);
+      localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify([newShop]));
       return true;
     } finally {
       setIsLoading(false);
@@ -362,9 +382,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.auth.signOut().catch(console.warn);
     }
     setUser(null);
+    setCurrentShop(null);
+    setAllUserShops([]);
     localStorage.removeItem(CACHED_USER_KEY);
     localStorage.removeItem(CACHED_SHOP_KEY);
     localStorage.removeItem(ACTIVE_SHOP_ID_KEY);
+    localStorage.removeItem(CACHED_ALL_SHOPS_KEY);
   }
 
   async function switchShop(shopId: string) {

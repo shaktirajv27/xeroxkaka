@@ -78,7 +78,7 @@ export const OrdersHistoryPage: React.FC = () => {
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-black text-slate-900 tracking-tight">Orders History & Search</h1>

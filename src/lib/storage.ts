@@ -76,31 +76,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export async function uploadOrderFile(file: File, storagePath: string, shopSlug?: string): Promise<string> {
   const slug = shopSlug || storagePath.split('/')[0] || 'shop';
 
-  // 1. First Priority: Direct API server upload (bypasses RLS, 100% reliable across all devices)
-  if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: {
-          'x-filename': encodeURIComponent(file.name),
-          'x-shop-slug': slug,
-          'content-type': file.type || 'application/octet-stream',
-        },
-        body: file,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.path) {
-          return data.path;
-        }
-      }
-    } catch (apiErr) {
-      console.warn('API upload endpoint notice (trying direct Supabase client):', apiErr);
-    }
-  }
-
-  // 2. Second Priority: Direct client-side Supabase Storage SDK
+  // 1. Direct Supabase Storage SDK (Ultra-fast direct upload, no intermediate server delay)
   if (isSupabaseConfigured && supabase) {
     try {
       const { data, error } = await supabase.storage
@@ -118,7 +94,7 @@ export async function uploadOrderFile(file: File, storagePath: string, shopSlug?
     }
   }
 
-  // 3. Fallback to client Object URL if completely offline
+  // 2. Fallback to client Object URL if offline
   if (typeof URL !== 'undefined' && URL.createObjectURL) {
     return URL.createObjectURL(file);
   }

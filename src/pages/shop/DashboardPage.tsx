@@ -107,14 +107,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
   const readyCount = orders.filter((o) => o.status === 'ready').length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Top Banner & Quick QR Link */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 p-4 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full uppercase tracking-wider">
+          <span className="text-[10px] sm:text-[11px] font-bold text-sky-700 bg-sky-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
             Online Storefront Active
           </span>
-          <h1 className="text-2xl font-black text-slate-900 mt-1">
+          <h1 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
             {currentShop.shop_name}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -122,13 +122,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             type="button"
             onClick={() => onNavigate('/settings')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
           >
-            <QrCode className="w-4 h-4 text-indigo-600" />
+            <QrCode className="w-4 h-4 text-sky-600" />
             <span>Counter Standee QR</span>
           </button>
 
@@ -136,7 +136,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
             href={`/s/${currentShop.slug}`}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
           >
             <span>Open Customer Page</span>
             <ExternalLink className="w-3.5 h-3.5" />
@@ -145,7 +145,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
       </div>
 
       {/* Top Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between text-amber-600 mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">

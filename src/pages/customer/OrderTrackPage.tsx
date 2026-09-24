@@ -113,12 +113,12 @@ export const OrderTrackPage: React.FC<OrderTrackPageProps> = ({
         {/* Header Branding */}
         <div className="text-center">
           <div className="inline-flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">
-              X
+            <div className="h-8 px-2 rounded-xl bg-white flex items-center justify-center border border-slate-100 shadow-2xs">
+              <img src="/logo.png" alt="PrintSetu" className="h-5 w-auto object-contain" />
             </div>
-            <span className="font-bold text-slate-900 text-base">XeroxFlow Order Tracking</span>
+            <span className="font-bold text-slate-900 text-sm">PrintSetu Order Tracking</span>
           </div>
-          <h1 className="text-2xl font-black text-slate-900">
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
             Order #{orderNumber.toUpperCase()}
           </h1>
         </div>

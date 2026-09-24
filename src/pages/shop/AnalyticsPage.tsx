@@ -44,7 +44,7 @@ export const AnalyticsPage: React.FC = () => {
   const colorPercent = totalPages > 0 ? Math.round((analytics.colorPages / totalPages) * 100) : 0;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">

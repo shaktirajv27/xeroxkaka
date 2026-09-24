@@ -81,7 +81,7 @@ export const SettingsPage: React.FC = () => {
     e.preventDefault();
     if (!currentShop) return;
     setIsSavingProfile(true);
-    setProfileSuccess(false);
+    setProfileSuccess(true); // Optimistic feedback immediately
 
     try {
       await db.updateShop(currentShop.id, {
@@ -93,10 +93,10 @@ export const SettingsPage: React.FC = () => {
         state: stateName,
       });
       await refreshShop();
-      setProfileSuccess(true);
-      setTimeout(() => setProfileSuccess(false), 3000);
+      setTimeout(() => setProfileSuccess(false), 2500);
     } catch (err) {
       console.error('Failed to update shop profile', err);
+      setProfileSuccess(false);
     } finally {
       setIsSavingProfile(false);
     }
@@ -107,7 +107,7 @@ export const SettingsPage: React.FC = () => {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">

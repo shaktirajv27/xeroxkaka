@@ -30,12 +30,10 @@ export const ServicesEditor: React.FC<ServicesEditorProps> = ({ shopId, services
     setIsSaving(true);
     setSavedSuccess(false);
     try {
-      for (const s of localServices) {
-        await db.updateShopService(s);
-      }
+      await db.updateShopServicesBatch(shopId, localServices);
       setSavedSuccess(true);
       onRefresh();
-      setTimeout(() => setSavedSuccess(false), 3000);
+      setTimeout(() => setSavedSuccess(false), 2500);
     } catch (err) {
       console.error('Failed to update services', err);
     } finally {
