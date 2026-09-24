@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Shop, Profile } from '../types/database';
-import { db, generateUUID } from '../lib/db';
+import { db, generateUUID, REAL_PRINTSETU_SHOP } from '../lib/db';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { DEFAULT_PRICING_RULES, DEFAULT_SERVICES } from '../lib/priceEngine';
 
@@ -8,6 +8,17 @@ const CACHED_USER_KEY = 'xeroxflow_cached_user';
 const CACHED_SHOP_KEY = 'xeroxflow_cached_shop';
 const CACHED_ALL_SHOPS_KEY = 'xeroxflow_cached_all_shops';
 const ACTIVE_SHOP_ID_KEY = 'xeroxflow_active_shop_id';
+
+function isDummyShopData(s: any): boolean {
+  if (!s) return false;
+  return (
+    s.id === 'a0000000-0000-0000-0000-000000000001' ||
+    s.id === 'b0000000-0000-0000-0000-000000000002' ||
+    s.slug === 'abc-xerox' ||
+    s.slug === 'quickprint' ||
+    (typeof s.shop_name === 'string' && (s.shop_name.includes('ABC Xerox') || s.shop_name.includes('QuickPrint')))
+  );
+}
 
 interface RegisterShopParams {
   email: string;
@@ -38,7 +49,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<Profile | null>(() => {
     try {
       const saved = localStorage.getItem(CACHED_USER_KEY);
-      return saved ? JSON.parse(saved) : null;
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u?.email === 'owner@abcxerox.com' || u?.email === 'owner@quickprint.com') {
+          localStorage.removeItem(CACHED_USER_KEY);
+          return null;
+        }
+        return u;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -47,18 +66,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentShop, setCurrentShop] = useState<Shop | null>(() => {
     try {
       const saved = localStorage.getItem(CACHED_SHOP_KEY);
-      return saved ? JSON.parse(saved) : null;
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (isDummyShopData(s)) {
+          localStorage.removeItem(CACHED_SHOP_KEY);
+          return REAL_PRINTSETU_SHOP;
+        }
+        return s;
+      }
+      return REAL_PRINTSETU_SHOP;
     } catch {
-      return null;
+      return REAL_PRINTSETU_SHOP;
     }
   });
 
   const [allUserShops, setAllUserShops] = useState<Shop[]>(() => {
     try {
       const saved = localStorage.getItem(CACHED_ALL_SHOPS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const list = JSON.parse(saved);
+        const filtered = Array.isArray(list) ? list.filter((s) => !isDummyShopData(s)) : [];
+        return filtered.length > 0 ? filtered : [REAL_PRINTSETU_SHOP];
+      }
+      return [REAL_PRINTSETU_SHOP];
     } catch {
-      return [];
+      return [REAL_PRINTSETU_SHOP];
     }
   });
 
@@ -72,17 +104,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   async function verifySession() {
     if (!isSupabaseConfigured || !supabase) {
       // Offline / Local fallback: ensure at least default shops are available
-      if (!currentShop) {
-        const shops = await db.getAllShops();
-        if (shops.length > 0) {
-          setAllUserShops(shops);
-          const savedShopId = localStorage.getItem(ACTIVE_SHOP_ID_KEY) || shops[0].id;
-          const match = shops.find((s) => s.id === savedShopId) || shops[0];
-          setCurrentShop(match);
-          localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(match));
-          localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(shops));
-        }
-      }
+      const shops = await db.getAllShops();
+      const validShops = shops.filter((s) => !isDummyShopData(s));
+      const activeList = validShops.length > 0 ? validShops : [REAL_PRINTSETU_SHOP];
+      setAllUserShops(activeList);
+      const match = activeList[0];
+      setCurrentShop(match);
+      localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(match));
+      localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(activeList));
       return;
     }
 
@@ -92,20 +121,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (session?.user) {
         // Active user session verified
         const [profileRes, ownerShopsRes] = await Promise.all([
-          supabase.from('profiles').select('*').eq('user_id', session.user.id).single(),
+          supabase.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle(),
           supabase.from('shops').select('*').eq('owner_id', session.user.id).eq('is_active', true),
         ]);
 
         const verifiedProfile: Profile = profileRes.data || {
           id: session.user.id,
-          full_name: session.user.user_metadata?.full_name || 'Shop Owner',
+          full_name: session.user.user_metadata?.full_name || 'Pratapbhai Vala',
           email: session.user.email || '',
+          phone: session.user.user_metadata?.phone || '9978770883',
           role: 'shop_owner',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
 
-        let myShops: Shop[] = (ownerShopsRes.data as Shop[]) || [];
+        let myShops: Shop[] = ((ownerShopsRes.data as Shop[]) || []).filter((s) => !isDummyShopData(s));
+        
         // Fallback for pre-existing shops matching owner email
         if (myShops.length === 0 && session.user.email) {
           const { data: emailShops } = await supabase
@@ -114,40 +145,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .eq('email', session.user.email)
             .eq('is_active', true);
           if (emailShops && emailShops.length > 0) {
-            myShops = emailShops as Shop[];
-            // Link owner_id for future fast lookups
-            await supabase
-              .from('shops')
-              .update({ owner_id: session.user.id })
-              .eq('id', myShops[0].id);
+            myShops = (emailShops as Shop[]).filter((s) => !isDummyShopData(s));
+            if (myShops.length > 0) {
+              await supabase
+                .from('shops')
+                .update({ owner_id: session.user.id })
+                .eq('id', myShops[0].id);
+            }
+          }
+        }
+
+        // If user still has no shop, query any active shops from Supabase
+        if (myShops.length === 0) {
+          const liveAll = await db.getAllShops();
+          const cleanLive = liveAll.filter((s) => !isDummyShopData(s));
+          if (cleanLive.length > 0) {
+            myShops = cleanLive;
+          } else {
+            myShops = [REAL_PRINTSETU_SHOP];
           }
         }
 
         const savedShopId = localStorage.getItem(ACTIVE_SHOP_ID_KEY);
-        const userShop =
+        const resolvedShop =
           myShops.find((s) => s.id === savedShopId) ||
           myShops[0] ||
-          null;
+          REAL_PRINTSETU_SHOP;
 
         setUser(verifiedProfile);
         setAllUserShops(myShops);
-        if (userShop) {
-          setCurrentShop(userShop);
-          localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(userShop));
-          localStorage.setItem(ACTIVE_SHOP_ID_KEY, userShop.id);
-        }
+        setCurrentShop(resolvedShop);
 
         localStorage.setItem(CACHED_USER_KEY, JSON.stringify(verifiedProfile));
+        localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(resolvedShop));
+        localStorage.setItem(ACTIVE_SHOP_ID_KEY, resolvedShop.id);
         localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(myShops));
       } else {
         // No active Supabase session
         setUser(null);
-        setCurrentShop(null);
-        setAllUserShops([]);
+        // Keep real print shop available for customer storefront browsing
+        setCurrentShop(REAL_PRINTSETU_SHOP);
+        setAllUserShops([REAL_PRINTSETU_SHOP]);
         localStorage.removeItem(CACHED_USER_KEY);
-        localStorage.removeItem(CACHED_SHOP_KEY);
-        localStorage.removeItem(ACTIVE_SHOP_ID_KEY);
-        localStorage.removeItem(CACHED_ALL_SHOPS_KEY);
       }
     } catch (err) {
       console.warn('Background session reconciliation notice:', err);
@@ -169,20 +208,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (authData?.user) {
           const [profileRes, ownerShopsRes] = await Promise.all([
-            supabase.from('profiles').select('*').eq('user_id', authData.user.id).single(),
+            supabase.from('profiles').select('*').eq('user_id', authData.user.id).maybeSingle(),
             supabase.from('shops').select('*').eq('owner_id', authData.user.id).eq('is_active', true),
           ]);
 
           const profile: Profile = profileRes.data || {
             id: authData.user.id,
-            full_name: authData.user.user_metadata?.full_name || 'Shop Owner',
+            full_name: authData.user.user_metadata?.full_name || 'Pratapbhai Vala',
             email: authData.user.email || email,
+            phone: authData.user.user_metadata?.phone || '9978770883',
             role: 'shop_owner',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           };
 
-          let myShops: Shop[] = (ownerShopsRes.data as Shop[]) || [];
+          let myShops: Shop[] = ((ownerShopsRes.data as Shop[]) || []).filter((s) => !isDummyShopData(s));
           if (myShops.length === 0 && authData.user.email) {
             const { data: emailShops } = await supabase
               .from('shops')
@@ -190,25 +230,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .eq('email', authData.user.email)
               .eq('is_active', true);
             if (emailShops && emailShops.length > 0) {
-              myShops = emailShops as Shop[];
-              await supabase
-                .from('shops')
-                .update({ owner_id: authData.user.id })
-                .eq('id', myShops[0].id);
+              myShops = (emailShops as Shop[]).filter((s) => !isDummyShopData(s));
+              if (myShops.length > 0) {
+                await supabase
+                  .from('shops')
+                  .update({ owner_id: authData.user.id })
+                  .eq('id', myShops[0].id);
+              }
             }
           }
 
-          const matchedShop = myShops[0] || null;
+          if (myShops.length === 0) {
+            const liveAll = await db.getAllShops();
+            const cleanLive = liveAll.filter((s) => !isDummyShopData(s));
+            if (cleanLive.length > 0) {
+              myShops = cleanLive;
+            } else {
+              myShops = [REAL_PRINTSETU_SHOP];
+            }
+          }
+
+          const matchedShop = myShops[0] || REAL_PRINTSETU_SHOP;
 
           setUser(profile);
           setAllUserShops(myShops);
-          if (matchedShop) {
-            setCurrentShop(matchedShop);
-            localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(matchedShop));
-            localStorage.setItem(ACTIVE_SHOP_ID_KEY, matchedShop.id);
-          }
+          setCurrentShop(matchedShop);
 
           localStorage.setItem(CACHED_USER_KEY, JSON.stringify(profile));
+          localStorage.setItem(CACHED_SHOP_KEY, JSON.stringify(matchedShop));
+          localStorage.setItem(ACTIVE_SHOP_ID_KEY, matchedShop.id);
           localStorage.setItem(CACHED_ALL_SHOPS_KEY, JSON.stringify(myShops));
           return true;
         }
@@ -382,8 +432,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.auth.signOut().catch(console.warn);
     }
     setUser(null);
-    setCurrentShop(null);
-    setAllUserShops([]);
+    setCurrentShop(REAL_PRINTSETU_SHOP);
+    setAllUserShops([REAL_PRINTSETU_SHOP]);
     localStorage.removeItem(CACHED_USER_KEY);
     localStorage.removeItem(CACHED_SHOP_KEY);
     localStorage.removeItem(ACTIVE_SHOP_ID_KEY);

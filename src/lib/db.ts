@@ -17,6 +17,35 @@ import { generateNextOrderNumber } from './orderNumber';
 // In-Memory & LocalStorage persistent state for fallback
 const STORAGE_KEY = 'xeroxflow_platform_state_v1';
 
+export const REAL_PRINTSETU_SHOP: Shop = {
+  id: 'c1000000-0000-0000-0000-000000000001',
+  owner_id: 'bbc1a326-5137-466a-8228-86a3c532c0df',
+  shop_name: 'PrintSetu Digital Xerox',
+  slug: 'printsetu',
+  phone: '9978770883',
+  whatsapp_number: '9978770883',
+  email: 'pratavala4@gmail.com',
+  address: 'PrintSetu Hub, Main Road',
+  city: 'Ahmedabad',
+  state: 'Gujarat',
+  pincode: '380001',
+  logo_url: '/logo.png',
+  is_active: true,
+  created_at: '2026-09-24T11:27:45.189889+00:00',
+  updated_at: '2026-09-24T11:27:45.189889+00:00',
+};
+
+function isDummyShop(s: any): boolean {
+  if (!s) return false;
+  return (
+    s.id === 'a0000000-0000-0000-0000-000000000001' ||
+    s.id === 'b0000000-0000-0000-0000-000000000002' ||
+    s.slug === 'abc-xerox' ||
+    s.slug === 'quickprint' ||
+    (typeof s.shop_name === 'string' && (s.shop_name.includes('ABC Xerox') || s.shop_name.includes('QuickPrint')))
+  );
+}
+
 export function generateUUID(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -46,14 +75,23 @@ function loadLocalState(): PlatformState {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
+        let modified = false;
         // Purge any legacy dummy placeholder shops from previous dev sessions
-        if (parsed.shops && parsed.shops.some((s: any) => s.id === 'a0000000-0000-0000-0000-000000000001')) {
-          parsed.shops = (parsed.shops || []).filter(
-            (s: any) => s.id !== 'a0000000-0000-0000-0000-000000000001' && s.id !== 'b0000000-0000-0000-0000-000000000002'
-          );
+        if (parsed.shops && parsed.shops.some(isDummyShop)) {
+          parsed.shops = (parsed.shops || []).filter((s: any) => !isDummyShop(s));
+          modified = true;
+        }
+        if (parsed.customers && parsed.customers.some((c: any) => c.id === 'c0000000-0000-0000-0000-000000000001')) {
           parsed.customers = (parsed.customers || []).filter(
             (c: any) => c.id !== 'c0000000-0000-0000-0000-000000000001'
           );
+          modified = true;
+        }
+        if (!parsed.shops || parsed.shops.length === 0) {
+          parsed.shops = [REAL_PRINTSETU_SHOP];
+          modified = true;
+        }
+        if (modified) {
           saveLocalState(parsed);
         }
         return parsed;
@@ -64,15 +102,38 @@ function loadLocalState(): PlatformState {
   }
 
   const initial: PlatformState = {
-    shops: [],
+    shops: [REAL_PRINTSETU_SHOP],
     customers: [],
     orders: [],
     order_items: [],
     files: [],
-    pricing_rules: [],
-    shop_services: [],
+    pricing_rules: DEFAULT_PRICING_RULES.map((r, i) => ({
+      ...r,
+      id: `rule-init-${i}`,
+      shop_id: REAL_PRINTSETU_SHOP.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })),
+    shop_services: DEFAULT_SERVICES.map((s, i) => ({
+      ...s,
+      id: `svc-init-${i}`,
+      shop_id: REAL_PRINTSETU_SHOP.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })),
     status_history: [],
-    settings: [],
+    settings: [{
+      id: 'settings-init',
+      shop_id: REAL_PRINTSETU_SHOP.id,
+      auto_confirm: false,
+      sound_enabled: true,
+      retention_hours: 48,
+      opening_time: '09:00',
+      closing_time: '21:00',
+      currency_symbol: '₹',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }],
   };
   saveLocalState(initial);
   return initial;
@@ -1043,7 +1104,69 @@ export const db = {
     });
   },
 
+  getCachedShopCustomers(shopId: string): { customer: Customer; orderCount: number; totalSpent: number; lastOrderDate: string }[] {
+    const state = loadLocalState();
+    const shopCustomers = state.customers.filter((c) => c.shop_id === shopId);
+    const shopOrders = state.orders.filter((o) => o.shop_id === shopId);
+
+    return shopCustomers.map((cust) => {
+      const custOrders = shopOrders.filter((o) => o.customer_id === cust.id);
+      const totalSpent = custOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+      const lastOrderDate = custOrders.length > 0 ? custOrders[0].created_at : cust.created_at;
+
+      return {
+        customer: cust,
+        orderCount: custOrders.length,
+        totalSpent: Math.round(totalSpent * 100) / 100,
+        lastOrderDate,
+      };
+    });
+  },
+
   // ANALYTICS
+  getCachedShopAnalytics(shopId: string) {
+    const orders = this.getCachedOrdersByShop(shopId);
+    const items = orders.flatMap((o) => o.items || []);
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const weekStart = todayStart - 7 * 86400000;
+    const monthStart = todayStart - 30 * 86400000;
+
+    const ordersToday = orders.filter((o) => new Date(o.created_at).getTime() >= todayStart);
+    const ordersWeek = orders.filter((o) => new Date(o.created_at).getTime() >= weekStart);
+    const ordersMonth = orders.filter((o) => new Date(o.created_at).getTime() >= monthStart);
+
+    const revenueToday = ordersToday.reduce((sum, o) => sum + Number(o.total || 0), 0);
+    const revenueWeek = ordersWeek.reduce((sum, o) => sum + Number(o.total || 0), 0);
+    const revenueMonth = ordersMonth.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+    let bwPages = 0;
+    let colorPages = 0;
+    const paperSizeCounts: Record<string, number> = {};
+
+    for (const it of items) {
+      const totalP = (it.calculated_pages || 1) * (it.copies || 1);
+      if (it.print_color === 'bw') bwPages += totalP;
+      else colorPages += totalP;
+
+      paperSizeCounts[it.paper_size] = (paperSizeCounts[it.paper_size] || 0) + totalP;
+    }
+
+    return {
+      ordersToday: ordersToday.length,
+      ordersWeek: ordersWeek.length,
+      ordersMonth: ordersMonth.length,
+      revenueToday: Math.round(revenueToday * 100) / 100,
+      revenueWeek: Math.round(revenueWeek * 100) / 100,
+      revenueMonth: Math.round(revenueMonth * 100) / 100,
+      bwPages,
+      colorPages,
+      paperSizeCounts,
+      totalOrders: orders.length,
+    };
+  },
+
   async getShopAnalytics(shopId: string) {
     const orders = await this.getOrdersByShop(shopId);
     const items = orders.flatMap((o) => o.items || []);

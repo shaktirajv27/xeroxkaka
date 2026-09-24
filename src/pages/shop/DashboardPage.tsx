@@ -26,19 +26,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
   const [orders, setOrders] = useState<Order[]>(() => {
     return currentShop ? db.getCachedOrdersByShop(currentShop.id) : [];
   });
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(() => {
-    return currentShop ? db.getCachedOrdersByShop(currentShop.id).length === 0 : false;
+  const [analytics, setAnalytics] = useState<any>(() => {
+    return currentShop ? db.getCachedShopAnalytics(currentShop.id) : null;
   });
+  const [isLoading, setIsLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     if (currentShop) {
       const cached = db.getCachedOrdersByShop(currentShop.id);
-      if (cached.length > 0) {
-        setOrders(cached);
-        setIsLoading(false);
-      }
+      setOrders(cached);
+      setAnalytics(db.getCachedShopAnalytics(currentShop.id));
       loadData();
     }
   }, [currentShop]);
@@ -57,6 +55,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
             return [updatedOrder, ...prev];
           }
         });
+        if (currentShop) {
+          setAnalytics(db.getCachedShopAnalytics(currentShop.id));
+        }
       }
     });
     return () => unsubscribe();
@@ -87,14 +88,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
         if (selectedOrder?.id === updated.id) {
           setSelectedOrder(updated);
         }
+        setAnalytics(db.getCachedShopAnalytics(currentShop.id));
       }
     } catch (err) {
       console.error('Failed to update status', err);
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Loading shop cockpit..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Connecting to your print shop cockpit..." />
+      </div>
+    );
   }
 
   // Active queue: Pending, Confirmed, Printing, Ready

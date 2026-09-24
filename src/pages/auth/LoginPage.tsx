@@ -318,7 +318,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialTab = 'login', onLo
                   type="text"
                   value={ownerName}
                   onChange={(e) => setOwnerName(e.target.value)}
-                  placeholder="e.g. Ramesh Patel"
+                  placeholder="e.g. Pratapbhai Vala"
                   className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 font-medium"
                   required
                 />

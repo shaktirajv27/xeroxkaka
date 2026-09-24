@@ -15,9 +15,7 @@ export const OrdersHistoryPage: React.FC = () => {
   });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [isLoading, setIsLoading] = useState(() => {
-    return currentShop ? db.getCachedOrdersByShop(currentShop.id).length === 0 : false;
-  });
+  const [isLoading, setIsLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   // Pagination
@@ -38,6 +36,8 @@ export const OrdersHistoryPage: React.FC = () => {
 
   useEffect(() => {
     if (currentShop) {
+      const cached = db.getCachedOrdersByShop(currentShop.id);
+      setOrders(cached);
       loadOrders();
     }
   }, [currentShop, loadOrders]);
@@ -57,8 +57,12 @@ export const OrdersHistoryPage: React.FC = () => {
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Loading order history..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Loading order history..." />
+      </div>
+    );
   }
 
   // Filter & Search

@@ -15,19 +15,21 @@ interface CustomerRow {
 
 export const CustomersPage: React.FC = () => {
   const { currentShop } = useAuth();
-  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>(() => {
+    return currentShop ? db.getCachedShopCustomers(currentShop.id) : [];
+  });
   const [search, setSearch] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (currentShop) {
+      setCustomers(db.getCachedShopCustomers(currentShop.id));
       loadCustomers();
     }
   }, [currentShop]);
 
   const loadCustomers = async () => {
     if (!currentShop) return;
-    setIsLoading(true);
     try {
       const data = await db.getShopCustomers(currentShop.id);
       setCustomers(data);
@@ -38,8 +40,12 @@ export const CustomersPage: React.FC = () => {
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Loading customer directory..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Loading customer directory..." />
+      </div>
+    );
   }
 
   const filtered = customers.filter((c) => {

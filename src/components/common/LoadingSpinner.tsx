@@ -5,43 +5,46 @@ export const LoadingSpinner: React.FC<{ message?: string; fullScreen?: boolean }
   fullScreen = false,
 }) => {
   const content = (
-    <div className="flex flex-col items-center justify-center p-8 text-center select-none">
-      {/* Brand Logo with Laser Scanning Effect */}
-      <div className="relative mb-5 p-4 rounded-3xl bg-white/90 backdrop-blur-md border border-sky-100 shadow-xl shadow-sky-500/10 flex items-center justify-center overflow-hidden animate-print-laser">
-        {/* Scanner laser bar */}
-        <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-sky-500 to-transparent shadow-[0_0_8px_#0080FF] animate-print-scan pointer-events-none" />
+    <div className="flex flex-col items-center justify-center p-6 text-center select-none max-w-sm mx-auto">
+      {/* Brand Logo Card with Precision Laser Scanning Effect */}
+      <div className="relative mb-4 px-7 py-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-lg shadow-slate-900/5 flex items-center justify-center overflow-hidden animate-pulse-glow">
+        {/* Soft vertical light beam */}
+        <div className="absolute inset-0 bg-gradient-to-b from-sky-400/5 via-sky-500/10 to-transparent pointer-events-none" />
 
-        {/* PrintSetu Logo */}
+        {/* High-tech precision scanner laser line */}
+        <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-sky-500 to-transparent shadow-[0_0_10px_#0284c7] animate-laser-sweep pointer-events-none z-10" />
+
+        {/* Crisp PrintSetu Official Logo */}
         <img
           src="/logo.png"
           alt="PrintSetu"
-          className="h-10 sm:h-12 w-auto object-contain animate-print-feed"
+          className="h-9 sm:h-11 w-auto object-contain relative z-0 transition-transform duration-300"
         />
       </div>
 
-      {/* Modern micro-progress bar */}
-      <div className="w-36 h-1.5 bg-slate-200/80 rounded-full overflow-hidden mb-3 relative">
-        <div className="absolute top-0 bottom-0 bg-gradient-to-r from-sky-500 via-blue-600 to-sky-400 rounded-full w-1/2 animate-[shimmer_1.4s_infinite]"
-          style={{
-            animation: 'printFeed 1.4s ease-in-out infinite alternate',
-            width: '60%',
-          }}
-        />
+      {/* Smooth Shimmer Progress Bar */}
+      <div className="w-40 sm:w-48 h-1.5 bg-slate-200/70 rounded-full overflow-hidden mb-3 relative shadow-inner">
+        <div className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-sky-500 via-blue-600 to-sky-400 rounded-full animate-shimmer-bar" />
       </div>
 
       {/* Status Message */}
-      <p className="text-xs sm:text-sm font-semibold tracking-wide text-slate-700">
+      <p className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight">
         {message}
       </p>
-      <span className="text-[10px] text-sky-600 font-bold uppercase tracking-widest mt-1">
-        PrintSetu Engine
-      </span>
+
+      {/* Live Cloud Synchronized Badge */}
+      <div className="flex items-center gap-1.5 mt-1.5 px-2.5 py-0.5 rounded-full bg-sky-50 border border-sky-100">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="text-[10px] text-sky-700 font-bold uppercase tracking-wider">
+          PrintSetu Engine • Live
+        </span>
+      </div>
     </div>
   );
 
   if (fullScreen) {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center bg-slate-50/80 backdrop-blur-xs">
+      <div className="min-h-screen w-full flex items-center justify-center bg-slate-50/90 backdrop-blur-xs">
         {content}
       </div>
     );
@@ -49,3 +52,4 @@ export const LoadingSpinner: React.FC<{ message?: string; fullScreen?: boolean }
 
   return content;
 };
+

@@ -35,11 +35,22 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
   onNavigateHome,
   onSelectShop,
 }) => {
-  const [shop, setShop] = useState<Shop | null>(null);
   const [allShops, setAllShops] = useState<Shop[]>(() => db.getCachedShops());
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
-  const [services, setServices] = useState<ShopService[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [shop, setShop] = useState<Shop | null>(() => {
+    const cached = db.getCachedShops();
+    return cached.find((s) => s.slug === shopSlug) || cached[0] || null;
+  });
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>(() => {
+    const cached = db.getCachedShops();
+    const target = cached.find((s) => s.slug === shopSlug) || cached[0];
+    return target ? db.getCachedPricingRules(target.id) : [];
+  });
+  const [services, setServices] = useState<ShopService[]>(() => {
+    const cached = db.getCachedShops();
+    const target = cached.find((s) => s.slug === shopSlug) || cached[0];
+    return target ? db.getCachedShopServices(target.id) : [];
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
   // Shop Switcher Modal State
   const [isShopSwitcherOpen, setIsShopSwitcherOpen] = useState(false);
@@ -64,20 +75,22 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
 
   useEffect(() => {
     async function loadShopData() {
-      setIsLoading(true);
       try {
         const [foundShop, liveShops] = await Promise.all([
           db.getShopBySlug(shopSlug),
           db.getAllShops(),
         ]);
 
-        setAllShops(liveShops);
+        if (liveShops.length > 0) {
+          setAllShops(liveShops);
+        }
 
-        if (foundShop) {
-          setShop(foundShop);
+        const resolved = foundShop || (liveShops.length > 0 ? liveShops[0] : null);
+        if (resolved) {
+          setShop(resolved);
           const [rules, svcs] = await Promise.all([
-            db.getPricingRules(foundShop.id),
-            db.getShopServices(foundShop.id),
+            db.getPricingRules(resolved.id),
+            db.getShopServices(resolved.id),
           ]);
           setPricingRules(rules);
           setServices(svcs);

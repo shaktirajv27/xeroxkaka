@@ -102,8 +102,12 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Loading settings..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Loading settings..." />
+      </div>
+    );
   }
 
   return (

@@ -14,19 +14,13 @@ export const PrintQueuePage: React.FC = () => {
     return currentShop ? db.getCachedOrdersByShop(currentShop.id) : [];
   });
   const [activeTab, setActiveTab] = useState<string>('all_active');
-  const [isLoading, setIsLoading] = useState(() => {
-    return currentShop ? db.getCachedOrdersByShop(currentShop.id).length === 0 : false;
-  });
+  const [isLoading, setIsLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     if (currentShop) {
-      // Sync local cache immediately on shop change
       const cached = db.getCachedOrdersByShop(currentShop.id);
-      if (cached.length > 0) {
-        setOrders(cached);
-        setIsLoading(false);
-      }
+      setOrders(cached);
       loadOrders();
     }
   }, [currentShop]);
@@ -76,8 +70,12 @@ export const PrintQueuePage: React.FC = () => {
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Loading print queue..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Loading print queue..." />
+      </div>
+    );
   }
 
   const pending = orders.filter((o) => o.status === 'pending');

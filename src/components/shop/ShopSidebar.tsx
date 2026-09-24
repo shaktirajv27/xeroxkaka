@@ -106,7 +106,7 @@ export const ShopSidebar: React.FC<ShopSidebarProps> = ({
             </select>
           ) : (
             <div className="text-xs font-bold text-white truncate py-0.5">
-              {currentShop?.shop_name || 'My Print Shop'}
+              {currentShop?.shop_name || 'PrintSetu Digital Xerox'}
               <div className="text-[10px] text-slate-400 font-normal">
                 {currentShop?.city || 'Main Branch'}
               </div>

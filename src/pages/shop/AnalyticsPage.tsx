@@ -13,18 +13,20 @@ import {
 
 export const AnalyticsPage: React.FC = () => {
   const { currentShop } = useAuth();
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [analytics, setAnalytics] = useState<any>(() => {
+    return currentShop ? db.getCachedShopAnalytics(currentShop.id) : null;
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (currentShop) {
+      setAnalytics(db.getCachedShopAnalytics(currentShop.id));
       loadStats();
     }
   }, [currentShop]);
 
   const loadStats = async () => {
     if (!currentShop) return;
-    setIsLoading(true);
     try {
       const data = await db.getShopAnalytics(currentShop.id);
       setAnalytics(data);
@@ -35,8 +37,20 @@ export const AnalyticsPage: React.FC = () => {
     }
   };
 
-  if (isLoading || !currentShop) {
-    return <LoadingSpinner fullScreen message="Crunching shop analytics..." />;
+  if (!currentShop) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Crunching shop analytics..." />
+      </div>
+    );
+  }
+
+  if (!analytics) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <LoadingSpinner message="Crunching shop analytics..." />
+      </div>
+    );
   }
 
   const totalPages = (analytics.bwPages || 0) + (analytics.colorPages || 0);
