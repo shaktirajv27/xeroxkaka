@@ -95,6 +95,20 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
     }
   };
 
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!currentShop) return;
+    try {
+      await db.deleteOrder(orderId, currentShop.id);
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(null);
+      }
+      setAnalytics(db.getCachedShopAnalytics(currentShop.id));
+    } catch (err) {
+      console.error('Failed to delete order', err);
+    }
+  };
+
   if (!currentShop) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
@@ -257,6 +271,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={handleUpdateStatus}
+        onDeleteOrder={handleDeleteOrder}
       />
     </div>
   );

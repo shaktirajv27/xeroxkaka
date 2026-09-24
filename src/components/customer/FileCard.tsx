@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ProcessedUpload } from '../../lib/storage';
 import { ItemCalculationInput, calculateItemPrice } from '../../lib/priceEngine';
-import { PricingRule, ShopService } from '../../types/database';
+import { PricingRule, ShopService, PaperSize } from '../../types/database';
 import { PrintOptionsModal } from './PrintOptionsModal';
 import { FileText, Image as ImageIcon, Trash2, Sliders, Eye } from 'lucide-react';
 
@@ -12,6 +12,7 @@ interface FileCardProps {
   };
   pricingRules: PricingRule[];
   services: ShopService[];
+  availablePaperSizes?: PaperSize[];
   onUpdateConfig: (newConfig: ItemCalculationInput) => void;
   onRemove: () => void;
   onPreview: () => void;
@@ -21,6 +22,7 @@ export const FileCard: React.FC<FileCardProps> = ({
   item,
   pricingRules,
   services,
+  availablePaperSizes,
   onUpdateConfig,
   onRemove,
   onPreview,
@@ -145,6 +147,7 @@ export const FileCard: React.FC<FileCardProps> = ({
           config={config}
           pricingRules={pricingRules}
           services={services}
+          availablePaperSizes={availablePaperSizes}
           onSave={onUpdateConfig}
           onClose={() => setShowModal(false)}
         />

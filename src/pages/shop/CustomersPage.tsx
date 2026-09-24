@@ -4,7 +4,7 @@ import { db } from '../../lib/db';
 import { Customer } from '../../types/database';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
-import { Users, Phone, MessageCircle, Search, Calendar, IndianRupee } from 'lucide-react';
+import { Users, Phone, MessageCircle, Search, Calendar, IndianRupee, Trash2, AlertTriangle } from 'lucide-react';
 
 interface CustomerRow {
   customer: Customer;
@@ -20,6 +20,8 @@ export const CustomersPage: React.FC = () => {
   });
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (currentShop) {
@@ -37,6 +39,20 @@ export const CustomersPage: React.FC = () => {
       console.error('Failed to load customers', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId: string) => {
+    if (!currentShop) return;
+    try {
+      setIsDeleting(true);
+      await db.deleteCustomer(customerId, currentShop.id);
+      setCustomers((prev) => prev.filter((c) => c.customer.id !== customerId));
+      setCustomerToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete customer', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -133,12 +149,58 @@ export const CustomersPage: React.FC = () => {
                         >
                           <Phone className="w-4 h-4" />
                         </a>
+                        <button
+                          type="button"
+                          onClick={() => setCustomerToDelete(customer)}
+                          className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                          title="Delete customer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Customer Confirmation Modal */}
+      {customerToDelete && (
+        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-rose-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">Delete Customer {customerToDelete.name}?</h4>
+                <p className="text-xs text-slate-500">
+                  This will remove {customerToDelete.name} ({customerToDelete.phone}) from your customer directory.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCustomerToDelete(null)}
+                disabled={isDeleting}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => handleDeleteCustomer(customerToDelete.id)}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Customer'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

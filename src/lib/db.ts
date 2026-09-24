@@ -9,10 +9,11 @@ import {
   OrderStatus,
   OrderStatusHistory,
   ShopSettings,
+  PaperSize,
 } from '../types/database';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { DEFAULT_PRICING_RULES, DEFAULT_SERVICES } from './priceEngine';
-import { generateNextOrderNumber } from './orderNumber';
+import { generateNextOrderNumber, incrementOrderNumber } from './orderNumber';
 
 // In-Memory & LocalStorage persistent state for fallback
 const STORAGE_KEY = 'xeroxflow_platform_state_v1';
@@ -67,6 +68,9 @@ interface PlatformState {
   shop_services: ShopService[];
   status_history: OrderStatusHistory[];
   settings: ShopSettings[];
+  deleted_order_ids?: string[];
+  deleted_customer_ids?: string[];
+  available_paper_sizes?: Record<string, PaperSize[]>;
 }
 
 function loadLocalState(): PlatformState {
@@ -395,7 +399,7 @@ export const db = {
     }
   },
 
-  // SERVICES
+  // SERVICES (Finishing Services: Lamination, Binding, etc.)
   async getShopServices(shopId: string): Promise<ShopService[]> {
     if (isSupabaseConfigured && supabase) {
       try {
@@ -407,7 +411,7 @@ export const db = {
           const state = loadLocalState();
           state.shop_services = state.shop_services.filter((s) => s.shop_id !== shopId).concat(data as ShopService[]);
           saveLocalState(state);
-          return data as ShopService[];
+          return (data as ShopService[]).filter((s) => !s.service_name.startsWith('Paper: '));
         }
       } catch (err) {
         console.warn('Supabase getShopServices fallback', err);
@@ -415,7 +419,9 @@ export const db = {
     }
 
     const state = loadLocalState();
-    const services = state.shop_services.filter((s) => s.shop_id === shopId);
+    const services = state.shop_services
+      .filter((s) => s.shop_id === shopId)
+      .filter((s) => !s.service_name.startsWith('Paper: '));
     if (services.length === 0) {
       return DEFAULT_SERVICES.map((s, i) => ({
         ...s,
@@ -465,6 +471,80 @@ export const db = {
         await supabase.from('shop_services').upsert(updatedServices);
       } catch (err) {
         console.warn('Supabase updateShopServicesBatch fallback', err);
+      }
+    }
+  },
+
+  // AVAILABLE PAPER SIZES (Paper sizes accepted by this shop)
+  getCachedAvailablePaperSizes(shopId: string): PaperSize[] {
+    const state = loadLocalState();
+    if (state.available_paper_sizes && state.available_paper_sizes[shopId]) {
+      return state.available_paper_sizes[shopId];
+    }
+    const paperServices = state.shop_services.filter((s) => s.shop_id === shopId && s.service_name.startsWith('Paper: '));
+    if (paperServices.length > 0) {
+      const active = paperServices
+        .filter((s) => s.is_active)
+        .map((s) => s.service_name.replace('Paper: ', '') as PaperSize);
+      if (active.length > 0) return active;
+    }
+    return ['A4', 'A3', 'A5', 'Legal', 'Letter'];
+  },
+
+  async getAvailablePaperSizes(shopId: string): Promise<PaperSize[]> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('shop_services')
+          .select('*')
+          .eq('shop_id', shopId);
+        if (!error && data) {
+          const paperItems = data.filter((s: any) => s.service_name.startsWith('Paper: '));
+          if (paperItems.length > 0) {
+            const active = paperItems
+              .filter((s: any) => s.is_active)
+              .map((s: any) => s.service_name.replace('Paper: ', '') as PaperSize);
+            const state = loadLocalState();
+            if (!state.available_paper_sizes) state.available_paper_sizes = {};
+            state.available_paper_sizes[shopId] = active;
+            saveLocalState(state);
+            return active;
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase getAvailablePaperSizes notice', err);
+      }
+    }
+    return this.getCachedAvailablePaperSizes(shopId);
+  },
+
+  async updateAvailablePaperSizes(shopId: string, enabledSizes: PaperSize[]): Promise<void> {
+    const allSizes: PaperSize[] = ['A4', 'A3', 'A5', 'Legal', 'Letter'];
+    const paperServices: ShopService[] = allSizes.map((size) => ({
+      id: `paper-${shopId}-${size.toLowerCase()}`,
+      shop_id: shopId,
+      service_name: `Paper: ${size}`,
+      price: 0,
+      is_active: enabledSizes.includes(size),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    // 1. Instant local state update
+    const state = loadLocalState();
+    if (!state.available_paper_sizes) state.available_paper_sizes = {};
+    state.available_paper_sizes[shopId] = enabledSizes;
+
+    const otherServices = state.shop_services.filter((s) => s.shop_id !== shopId || !s.service_name.startsWith('Paper: '));
+    state.shop_services = [...otherServices, ...paperServices];
+    saveLocalState(state);
+
+    // 2. Supabase sync
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('shop_services').upsert(paperServices, { onConflict: 'shop_id,service_name' });
+      } catch (err) {
+        console.warn('Supabase updateAvailablePaperSizes error', err);
       }
     }
   },
@@ -626,17 +706,55 @@ export const db = {
           phone: newCustomer.phone,
         });
 
-        await supabase.from('orders').insert({
-          id: orderId,
-          shop_id: params.shop_id,
-          customer_id: customerId,
-          order_number: orderNumber,
-          status: 'pending',
-          priority: 'normal',
-          subtotal: params.subtotal,
-          total: params.total,
-          customer_note: params.customer_note,
-        });
+        let candidateOrderNumber = orderNumber;
+        let insertSuccess = false;
+        let attempts = 0;
+        const MAX_ATTEMPTS = 50;
+
+        while (!insertSuccess && attempts < MAX_ATTEMPTS) {
+          attempts++;
+          const { error: insertError } = await supabase.from('orders').insert({
+            id: orderId,
+            shop_id: params.shop_id,
+            customer_id: customerId,
+            order_number: candidateOrderNumber,
+            status: 'pending',
+            priority: 'normal',
+            subtotal: params.subtotal,
+            total: params.total,
+            customer_note: params.customer_note,
+          });
+
+          if (!insertError) {
+            insertSuccess = true;
+            break;
+          }
+
+          if (
+            insertError.code === '23505' ||
+            insertError.message?.includes('duplicate key') ||
+            insertError.message?.includes('order_number')
+          ) {
+            candidateOrderNumber = incrementOrderNumber(candidateOrderNumber);
+            continue;
+          }
+
+          console.warn('Supabase order insert notice:', insertError.message);
+          break;
+        }
+
+        // If candidate was bumped during collision resolution, sync local state & notification
+        if (candidateOrderNumber !== orderNumber) {
+          newOrder.order_number = candidateOrderNumber;
+          fullOrder.order_number = candidateOrderNumber;
+          const freshState = loadLocalState();
+          const ordIdx = freshState.orders.findIndex((o) => o.id === orderId);
+          if (ordIdx >= 0) {
+            freshState.orders[ordIdx].order_number = candidateOrderNumber;
+            saveLocalState(freshState);
+          }
+          notifyOrderUpdate(fullOrder);
+        }
 
         const orderItemsData = newItems.map((itm) => ({
           id: itm.id,
@@ -731,10 +849,13 @@ export const db = {
             return { ...ord, files: mappedFiles } as Order;
           });
 
+          const state = loadLocalState();
+          const deletedIds = new Set(state.deleted_order_ids || []);
+          results = results.filter((o) => !deletedIds.has(o.id));
+
           // Sync real fetched orders into local storage cache for instant sub-20ms rendering
           if (!options?.status && !options?.search) {
-            const state = loadLocalState();
-            state.orders = state.orders.filter((o) => o.shop_id !== shopId).concat(results);
+            state.orders = state.orders.filter((o) => o.shop_id !== shopId && !deletedIds.has(o.id)).concat(results);
             saveLocalState(state);
           }
 
@@ -756,7 +877,8 @@ export const db = {
     }
 
     const state = loadLocalState();
-    let shopOrders = state.orders.filter((o) => o.shop_id === shopId);
+    const deletedIds = new Set(state.deleted_order_ids || []);
+    let shopOrders = state.orders.filter((o) => o.shop_id === shopId && !deletedIds.has(o.id));
 
     if (options?.status) {
       shopOrders = shopOrders.filter((o) => o.status === options.status);
@@ -793,7 +915,8 @@ export const db = {
 
   getCachedOrdersByShop(shopId: string): Order[] {
     const state = loadLocalState();
-    const shopOrders = state.orders.filter((o) => o.shop_id === shopId);
+    const deletedIds = new Set(state.deleted_order_ids || []);
+    const shopOrders = state.orders.filter((o) => o.shop_id === shopId && !deletedIds.has(o.id));
     return shopOrders
       .map((order) => {
         const customer = state.customers.find((c) => c.id === order.customer_id);
@@ -828,7 +951,9 @@ export const db = {
 
   getCachedShopServices(shopId: string): ShopService[] {
     const state = loadLocalState();
-    const services = state.shop_services.filter((s) => s.shop_id === shopId);
+    const services = state.shop_services
+      .filter((s) => s.shop_id === shopId)
+      .filter((s) => !s.service_name.startsWith('Paper: '));
     if (services.length === 0) {
       return DEFAULT_SERVICES.map((s, i) => ({
         ...s,
@@ -1058,6 +1183,9 @@ export const db = {
 
   // CUSTOMER DIRECTORY
   async getShopCustomers(shopId: string): Promise<{ customer: Customer; orderCount: number; totalSpent: number; lastOrderDate: string }[]> {
+    const state = loadLocalState();
+    const deletedCustIds = new Set(state.deleted_customer_ids || []);
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { data: custData } = await supabase
@@ -1068,26 +1196,27 @@ export const db = {
         const orders = await this.getOrdersByShop(shopId);
 
         if (custData) {
-          return custData.map((cust) => {
-            const custOrders = orders.filter((o) => o.customer_id === cust.id);
-            const totalSpent = custOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
-            const lastOrderDate = custOrders.length > 0 ? custOrders[0].created_at : cust.created_at;
+          return custData
+            .filter((c) => !deletedCustIds.has(c.id))
+            .map((cust) => {
+              const custOrders = orders.filter((o) => o.customer_id === cust.id);
+              const totalSpent = custOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+              const lastOrderDate = custOrders.length > 0 ? custOrders[0].created_at : cust.created_at;
 
-            return {
-              customer: cust as Customer,
-              orderCount: custOrders.length,
-              totalSpent: Math.round(totalSpent * 100) / 100,
-              lastOrderDate,
-            };
-          });
+              return {
+                customer: cust as Customer,
+                orderCount: custOrders.length,
+                totalSpent: Math.round(totalSpent * 100) / 100,
+                lastOrderDate,
+              };
+            });
         }
       } catch (err) {
         console.warn('Supabase getShopCustomers notice', err);
       }
     }
 
-    const state = loadLocalState();
-    const shopCustomers = state.customers.filter((c) => c.shop_id === shopId);
+    const shopCustomers = state.customers.filter((c) => c.shop_id === shopId && !deletedCustIds.has(c.id));
     const shopOrders = state.orders.filter((o) => o.shop_id === shopId);
 
     return shopCustomers.map((cust) => {
@@ -1106,7 +1235,8 @@ export const db = {
 
   getCachedShopCustomers(shopId: string): { customer: Customer; orderCount: number; totalSpent: number; lastOrderDate: string }[] {
     const state = loadLocalState();
-    const shopCustomers = state.customers.filter((c) => c.shop_id === shopId);
+    const deletedCustIds = new Set(state.deleted_customer_ids || []);
+    const shopCustomers = state.customers.filter((c) => c.shop_id === shopId && !deletedCustIds.has(c.id));
     const shopOrders = state.orders.filter((o) => o.shop_id === shopId);
 
     return shopCustomers.map((cust) => {
@@ -1121,6 +1251,82 @@ export const db = {
         lastOrderDate,
       };
     });
+  },
+
+  // ORDER DELETION (Shop Owner Right)
+  async deleteOrder(orderId: string, shopId?: string): Promise<boolean> {
+    const state = loadLocalState();
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) return false;
+    if (shopId && order.shop_id !== shopId) {
+      throw new Error('Access denied: You do not own this order.');
+    }
+
+    if (!state.deleted_order_ids) state.deleted_order_ids = [];
+    if (!state.deleted_order_ids.includes(orderId)) {
+      state.deleted_order_ids.push(orderId);
+    }
+
+    state.orders = state.orders.filter((o) => o.id !== orderId);
+    state.order_items = state.order_items.filter((i) => i.order_id !== orderId);
+    state.files = state.files.filter((f) => f.order_id !== orderId);
+    state.status_history = state.status_history.filter((h) => h.order_id !== orderId);
+    saveLocalState(state);
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('order_status_history').delete().eq('order_id', orderId);
+        await supabase.from('order_items').delete().eq('order_id', orderId);
+        await supabase.from('files').delete().eq('order_id', orderId);
+        const { error } = await supabase.from('orders').delete().eq('id', orderId);
+        if (error) {
+          console.warn('Supabase remote deleteOrder notice:', error.message);
+          // If RLS prevents hard delete, soft cancel
+          await supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+        }
+      } catch (err) {
+        console.warn('Supabase deleteOrder exception:', err);
+      }
+    }
+
+    notifyOrderUpdate({ id: orderId, shop_id: order.shop_id, status: 'cancelled' } as any);
+    return true;
+  },
+
+  // CUSTOMER DELETION (Shop Owner Right)
+  async deleteCustomer(customerId: string, shopId?: string): Promise<boolean> {
+    const state = loadLocalState();
+    const customer = state.customers.find((c) => c.id === customerId);
+    if (!customer) return false;
+    if (shopId && customer.shop_id !== shopId) {
+      throw new Error('Access denied: You do not own this customer record.');
+    }
+
+    if (!state.deleted_customer_ids) state.deleted_customer_ids = [];
+    if (!state.deleted_customer_ids.includes(customerId)) {
+      state.deleted_customer_ids.push(customerId);
+    }
+
+    state.customers = state.customers.filter((c) => c.id !== customerId);
+    state.orders.forEach((o) => {
+      if (o.customer_id === customerId) {
+        o.customer = undefined;
+      }
+    });
+    saveLocalState(state);
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase.from('customers').delete().eq('id', customerId);
+        if (error) {
+          console.warn('Supabase remote deleteCustomer notice:', error.message);
+        }
+      } catch (err) {
+        console.warn('Supabase deleteCustomer exception:', err);
+      }
+    }
+
+    return true;
   },
 
   // ANALYTICS

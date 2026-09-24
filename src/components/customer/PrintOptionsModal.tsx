@@ -10,6 +10,7 @@ interface PrintOptionsModalProps {
   config: ItemCalculationInput;
   pricingRules: PricingRule[];
   services: ShopService[];
+  availablePaperSizes?: PaperSize[];
   onSave: (newConfig: ItemCalculationInput) => void;
   onClose: () => void;
 }
@@ -20,10 +21,21 @@ export const PrintOptionsModal: React.FC<PrintOptionsModalProps> = ({
   config,
   pricingRules,
   services,
+  availablePaperSizes,
   onSave,
   onClose,
 }) => {
-  const [paperSize, setPaperSize] = useState<PaperSize>(config.paper_size || 'A4');
+  const allowedSizes: PaperSize[] =
+    availablePaperSizes && availablePaperSizes.length > 0
+      ? availablePaperSizes
+      : ['A4', 'A3', 'A5', 'Legal', 'Letter'];
+
+  const initialPaperSize =
+    config.paper_size && allowedSizes.includes(config.paper_size)
+      ? config.paper_size
+      : allowedSizes[0] || 'A4';
+
+  const [paperSize, setPaperSize] = useState<PaperSize>(initialPaperSize);
   const [printColor, setPrintColor] = useState<PrintColor>(config.print_color || 'bw');
   const [printSide, setPrintSide] = useState<PrintSide>(config.print_side || 'single');
   const [copies, setCopies] = useState<number>(config.copies || 1);
@@ -103,7 +115,7 @@ export const PrintOptionsModal: React.FC<PrintOptionsModalProps> = ({
               Paper Size
             </label>
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-              {(['A4', 'A3', 'A5', 'Legal', 'Letter'] as PaperSize[]).map((size) => (
+              {allowedSizes.map((size) => (
                 <button
                   key={size}
                   type="button"

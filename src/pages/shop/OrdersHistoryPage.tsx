@@ -6,7 +6,7 @@ import { StatusBadge } from '../../components/common/StatusBadge';
 import { OrderDetailModal } from '../../components/shop/OrderDetailModal';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
-import { Search, Eye, Phone, Calendar } from 'lucide-react';
+import { Search, Eye, Phone, Calendar, Trash2, AlertTriangle } from 'lucide-react';
 
 export const OrdersHistoryPage: React.FC = () => {
   const { currentShop } = useAuth();
@@ -17,6 +17,8 @@ export const OrdersHistoryPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -54,6 +56,23 @@ export const OrdersHistoryPage: React.FC = () => {
       }
     } catch (err) {
       console.error('Error updating order status', err);
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!currentShop) return;
+    try {
+      setIsDeleting(true);
+      await db.deleteOrder(orderId, currentShop.id);
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(null);
+      }
+      setOrderToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete order', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -187,14 +206,24 @@ export const OrdersHistoryPage: React.FC = () => {
                       <StatusBadge status={order.status} size="sm" />
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedOrder(order)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 font-semibold text-xs inline-flex items-center gap-1"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Inspect</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOrder(order)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 font-semibold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Inspect</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOrderToDelete(order)}
+                          className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                          title="Delete Order"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -236,7 +265,44 @@ export const OrdersHistoryPage: React.FC = () => {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={handleUpdateStatus}
+        onDeleteOrder={handleDeleteOrder}
       />
+
+      {/* Direct Row Delete Confirmation Modal */}
+      {orderToDelete && (
+        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-rose-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">Delete Order #{orderToDelete.order_number}?</h4>
+                <p className="text-xs text-slate-500">This action will permanently delete this order and its print records.</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setOrderToDelete(null)}
+                disabled={isDeleting}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => handleDeleteOrder(orderToDelete.id)}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Order'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

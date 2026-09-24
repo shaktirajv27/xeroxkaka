@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shop, PricingRule, ShopService } from '../../types/database';
+import { Shop, PricingRule, ShopService, PaperSize } from '../../types/database';
 import { db } from '../../lib/db';
 import { ProcessedUpload, uploadOrderFile } from '../../lib/storage';
 import { calculateOrderSummary, ItemCalculationInput } from '../../lib/priceEngine';
@@ -50,6 +50,11 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     const target = cached.find((s) => s.slug === shopSlug) || cached[0];
     return target ? db.getCachedShopServices(target.id) : [];
   });
+  const [availablePaperSizes, setAvailablePaperSizes] = useState<PaperSize[]>(() => {
+    const cached = db.getCachedShops();
+    const target = cached.find((s) => s.slug === shopSlug) || cached[0];
+    return target ? db.getCachedAvailablePaperSizes(target.id) : ['A4', 'A3', 'A5', 'Legal', 'Letter'];
+  });
   const [isLoading, setIsLoading] = useState(false);
 
   // Shop Switcher Modal State
@@ -88,12 +93,16 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
         const resolved = foundShop || (liveShops.length > 0 ? liveShops[0] : null);
         if (resolved) {
           setShop(resolved);
-          const [rules, svcs] = await Promise.all([
+          const [rules, svcs, sizes] = await Promise.all([
             db.getPricingRules(resolved.id),
             db.getShopServices(resolved.id),
+            db.getAvailablePaperSizes(resolved.id),
           ]);
           setPricingRules(rules);
           setServices(svcs);
+          if (sizes && sizes.length > 0) {
+            setAvailablePaperSizes(sizes);
+          }
         }
       } catch (err) {
         console.error('Error loading shop data', err);
@@ -105,10 +114,14 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
   }, [shopSlug]);
 
   const handleFilesAdded = (newUploads: ProcessedUpload[]) => {
+    const defaultPaperSize = (availablePaperSizes && availablePaperSizes.length > 0)
+      ? availablePaperSizes[0]
+      : ('A4' as const);
+
     const newItems = newUploads.map((up) => ({
       upload: up,
       config: {
-        paper_size: 'A4' as const,
+        paper_size: defaultPaperSize,
         print_color: 'bw' as const,
         print_side: 'single' as const,
         copies: 1,
@@ -440,6 +453,7 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
                   item={item}
                   pricingRules={pricingRules}
                   services={services}
+                  availablePaperSizes={availablePaperSizes}
                   onUpdateConfig={(cfg) => handleUpdateConfig(idx, cfg)}
                   onRemove={() => handleRemoveItem(idx)}
                   onPreview={() => setPreviewUpload(item.upload)}

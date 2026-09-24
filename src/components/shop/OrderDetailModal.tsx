@@ -12,22 +12,28 @@ import {
   Download,
   Eye,
   Calendar,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface OrderDetailModalProps {
   order: Order | null;
   onClose: () => void;
   onUpdateStatus: (orderId: string, status: OrderStatus, note?: string) => void;
+  onDeleteOrder?: (orderId: string) => void;
 }
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   order,
   onClose,
   onUpdateStatus,
+  onDeleteOrder,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'timeline'>('files');
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus>(order?.status || 'pending');
   const [statusNote, setStatusNote] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   if (!order) return null;
 
@@ -458,8 +464,21 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
         {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            Payment: <span className="font-bold text-slate-800 uppercase">{order.payment_method}</span> ({order.payment_status})
+          <div className="text-xs text-slate-500 flex items-center gap-4">
+            <span>
+              Payment: <span className="font-bold text-slate-800 uppercase">{order.payment_method}</span> ({order.payment_status})
+            </span>
+
+            {onDeleteOrder && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Order</span>
+              </button>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -468,6 +487,50 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             Close
           </button>
         </div>
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-rose-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">Delete Order #{order.order_number}?</h4>
+                  <p className="text-xs text-slate-500">This action will permanently delete this order and its print records.</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={isDeleting}
+                  className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={async () => {
+                    if (onDeleteOrder) {
+                      setIsDeleting(true);
+                      await onDeleteOrder(order.id);
+                      setIsDeleting(false);
+                      setShowDeleteConfirm(false);
+                      onClose();
+                    }
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Order'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
