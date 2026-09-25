@@ -18,7 +18,7 @@ export const LoadingSpinner: React.FC<{ message?: string; fullScreen?: boolean }
         <img
           src="/logo.png"
           alt="PrintSetu"
-          className="h-9 sm:h-11 w-auto object-contain relative z-0 transition-transform duration-300"
+          className="h-9 sm:h-11 w-auto object-contain relative z-0 transition-transform duration-300 animate-logo-14"
         />
       </div>
 

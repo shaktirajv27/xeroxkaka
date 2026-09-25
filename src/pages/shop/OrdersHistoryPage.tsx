@@ -19,6 +19,8 @@ export const OrdersHistoryPage: React.FC = () => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -65,12 +67,55 @@ export const OrdersHistoryPage: React.FC = () => {
       setIsDeleting(true);
       await db.deleteOrder(orderId, currentShop.id);
       setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      setSelectedOrderIds((prev) => prev.filter((id) => id !== orderId));
       if (selectedOrder?.id === orderId) {
         setSelectedOrder(null);
       }
       setOrderToDelete(null);
     } catch (err) {
       console.error('Failed to delete order', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleToggleSelectOrder = (orderId: string) => {
+    setSelectedOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const handleToggleSelectPage = (pageOrders: Order[]) => {
+    const pageIds = pageOrders.map((o) => o.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedOrderIds.includes(id));
+    if (allPageSelected) {
+      setSelectedOrderIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+    } else {
+      setSelectedOrderIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
+
+  const handleSelectAllFiltered = (filteredOrders: Order[]) => {
+    setSelectedOrderIds(filteredOrders.map((o) => o.id));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedOrderIds([]);
+  };
+
+  const handleBatchDelete = async () => {
+    if (!currentShop || selectedOrderIds.length === 0) return;
+    try {
+      setIsDeleting(true);
+      await db.deleteOrdersBatch(selectedOrderIds, currentShop.id);
+      setOrders((prev) => prev.filter((o) => !selectedOrderIds.includes(o.id)));
+      if (selectedOrder && selectedOrderIds.includes(selectedOrder.id)) {
+        setSelectedOrder(null);
+      }
+      setSelectedOrderIds([]);
+      setShowBatchDeleteConfirm(false);
+    } catch (err) {
+      console.error('Failed to batch delete orders', err);
     } finally {
       setIsDeleting(false);
     }
@@ -148,6 +193,44 @@ export const OrdersHistoryPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Multi-Selection Batch Actions Bar */}
+      {selectedOrderIds.length > 0 && (
+        <div className="bg-slate-900 text-white px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xl border border-slate-800 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center text-xs">
+              {selectedOrderIds.length}
+            </span>
+            <span className="font-semibold text-slate-200">orders selected</span>
+            <span className="text-slate-600">•</span>
+            <button
+              type="button"
+              onClick={() => handleSelectAllFiltered(filtered)}
+              className="text-indigo-400 hover:text-indigo-300 underline font-medium cursor-pointer"
+            >
+              Select all {filtered.length} matching orders
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDeselectAll}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors cursor-pointer"
+            >
+              Deselect All
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBatchDeleteConfirm(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedOrderIds.length})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Orders Table */}
       {paginated.length === 0 ? (
         <EmptyState
@@ -160,6 +243,15 @@ export const OrdersHistoryPage: React.FC = () => {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                  <th className="py-3.5 px-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={paginated.length > 0 && paginated.every((o) => selectedOrderIds.includes(o.id))}
+                      onChange={() => handleToggleSelectPage(paginated)}
+                      className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                      title="Select all on this page"
+                    />
+                  </th>
                   <th className="py-3.5 px-4">Order #</th>
                   <th className="py-3.5 px-4">Customer</th>
                   <th className="py-3.5 px-4">Date & Time</th>
@@ -170,63 +262,79 @@ export const OrdersHistoryPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {paginated.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3.5 px-4">
-                      <span className="font-bold text-slate-900 font-mono text-sm">
-                        #{order.order_number}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="font-semibold text-slate-800">{order.customer?.name}</div>
-                      <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
-                        <Phone className="w-3 h-3" />
-                        +91 {order.customer?.phone}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500">
-                      <div className="flex items-center gap-1 font-mono text-[11px]">
-                        <Calendar className="w-3 h-3 text-slate-400" />
-                        {new Date(order.created_at).toLocaleDateString()}
-                      </div>
-                      <span className="text-[10px] text-slate-400">
-                        {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600">
-                      <span className="font-semibold">{order.items?.length || 1} file(s)</span>
-                      <span className="text-slate-400 block text-[10px]">
-                        {(order.items || []).reduce((acc, it) => acc + it.copies, 0)} total copies
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-900 text-sm">
-                      ₹{order.total}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <StatusBadge status={order.status} size="sm" />
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedOrder(order)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 font-semibold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Inspect</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOrderToDelete(order)}
-                          className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                          title="Delete Order"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {paginated.map((order) => {
+                  const isChecked = selectedOrderIds.includes(order.id);
+                  return (
+                    <tr
+                      key={order.id}
+                      className={`transition-colors ${
+                        isChecked ? 'bg-indigo-50/50 hover:bg-indigo-50/70' : 'hover:bg-slate-50/60'
+                      }`}
+                    >
+                      <td className="py-3.5 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleSelectOrder(order.id)}
+                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="font-bold text-slate-900 font-mono text-sm">
+                          #{order.order_number}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-slate-800">{order.customer?.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+                          <Phone className="w-3 h-3" />
+                          +91 {order.customer?.phone}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-500">
+                        <div className="flex items-center gap-1 font-mono text-[11px]">
+                          <Calendar className="w-3 h-3 text-slate-400" />
+                          {new Date(order.created_at).toLocaleDateString()}
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600">
+                        <span className="font-semibold">{order.items?.length || 1} file(s)</span>
+                        <span className="text-slate-400 block text-[10px]">
+                          {(order.items || []).reduce((acc, it) => acc + it.copies, 0)} total copies
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-slate-900 text-sm">
+                        ₹{order.total}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <StatusBadge status={order.status} size="sm" />
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrder(order)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 font-semibold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Inspect</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOrderToDelete(order)}
+                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                            title="Delete Order"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -298,6 +406,46 @@ export const OrdersHistoryPage: React.FC = () => {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Order'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Selection Batch Delete Confirmation Modal */}
+      {showBatchDeleteConfirm && (
+        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-rose-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">
+                  Delete {selectedOrderIds.length} Orders?
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  Are you sure you want to permanently delete all {selectedOrderIds.length} selected orders? All associated print records will be removed.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowBatchDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleBatchDelete}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : `Yes, Delete ${selectedOrderIds.length} Orders`}</span>
               </button>
             </div>
           </div>

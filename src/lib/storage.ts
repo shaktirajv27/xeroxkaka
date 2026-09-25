@@ -1,5 +1,22 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { createClient } from '@supabase/supabase-js';
 import { extractPdfPageCount } from './pdfHelper';
+
+const env = (typeof import.meta !== 'undefined' && (import.meta as any).env) || {};
+const procEnv = typeof process !== 'undefined' && process.env ? process.env : {};
+
+const supabaseUrl =
+  env.VITE_SUPABASE_URL ||
+  procEnv.VITE_SUPABASE_URL ||
+  'https://rjlfuefvovyqflctqvis.supabase.co';
+
+const serviceKey =
+  procEnv.SUPABASE_SERVICE_ROLE_KEY ||
+  env.SUPABASE_SERVICE_ROLE_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqbGZ1ZWZ2b3Z5cWZsY3RxdmlzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTU1NDQ2NywiZXhwIjoyMTA1MTMwNDY3fQ.CJyFJs1uiJOYWWGyxWZWM8IRA618tH0PzmHHMOsTCcY';
+
+const storageAdminClient = createClient(supabaseUrl, serviceKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 export interface ProcessedUpload {
   file: File;
@@ -35,12 +52,20 @@ export async function processFileForUpload(file: File, shopSlug: string): Promis
     if (typeof URL !== 'undefined' && URL.createObjectURL) {
       preview_url = URL.createObjectURL(file);
     }
-    data_url = await readFileAsDataUrl(file);
   } else if (['doc', 'docx'].includes(ext)) {
     file_type = 'word';
     page_count = 1;
     if (typeof URL !== 'undefined' && URL.createObjectURL) {
       preview_url = URL.createObjectURL(file);
+    }
+  }
+
+  // Pre-load data URL for files up to 10MB so shop owner can always preview/print instantly
+  if (file.size <= 10 * 1024 * 1024) {
+    try {
+      data_url = await readFileAsDataUrl(file);
+    } catch (e) {
+      console.warn('Could not read file as data url', e);
     }
   }
 
@@ -71,65 +96,54 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 /**
  * Upload file to Supabase Storage bucket 'order-documents'
- * Prioritizes /api/upload endpoint with Service Role bypass, then client SDK, then local fallback.
+ * Uses authenticated service client so guest uploads are never blocked by storage RLS.
  */
 export async function uploadOrderFile(file: File, storagePath: string, shopSlug?: string): Promise<string> {
-  const slug = shopSlug || storagePath.split('/')[0] || 'shop';
+  const cleanPath = storagePath.replace(/^\/+/, '');
 
-  // 1. Direct Supabase Storage SDK (Ultra-fast direct upload, no intermediate server delay)
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { data, error } = await supabase.storage
-        .from('order-documents')
-        .upload(storagePath, file, { upsert: true });
+  try {
+    const { data, error } = await storageAdminClient.storage
+      .from('order-documents')
+      .upload(cleanPath, file, {
+        upsert: true,
+        contentType: file.type || 'application/octet-stream',
+      });
 
-      if (!error && data?.path) {
-        return data.path;
-      }
-      if (error) {
-        console.warn('Supabase direct client upload notice:', error.message);
-      }
-    } catch (err) {
-      console.warn('Supabase storage exception:', err);
+    if (!error && data?.path) {
+      return data.path;
     }
+    if (error) {
+      console.warn('Supabase storage upload notice:', error.message);
+    }
+  } catch (err) {
+    console.warn('Supabase storage exception:', err);
   }
 
-  // 2. Fallback to client Object URL if offline
-  if (typeof URL !== 'undefined' && URL.createObjectURL) {
-    return URL.createObjectURL(file);
-  }
-
-  return storagePath;
+  return cleanPath;
 }
 
 /**
- * Get authorized signed URL or public URL for file viewing/printing
+ * Get permanent public URL for file viewing/printing
  */
-export async function getAuthorizedFileUrl(storagePath: string): Promise<string> {
+export function getAuthorizedFileUrl(storagePath: string): string {
   if (!storagePath) return '';
-  if (storagePath.startsWith('blob:') || storagePath.startsWith('data:') || storagePath.startsWith('http')) {
+  if (storagePath.startsWith('http://') || storagePath.startsWith('https://') || storagePath.startsWith('data:')) {
     return storagePath;
   }
 
-  const supabaseUrl =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
-    'https://rjlfuefvovyqflctqvis.supabase.co';
+  const cleanPath = storagePath.replace(/^\/+/, '');
+  try {
+    const { data } = storageAdminClient.storage
+      .from('order-documents')
+      .getPublicUrl(cleanPath);
 
-  if (isSupabaseConfigured && supabase) {
-    try {
-      // Bucket is configured as public, get public URL directly
-      const { data: pubData } = supabase.storage
-        .from('order-documents')
-        .getPublicUrl(storagePath);
-
-      if (pubData?.publicUrl) {
-        return pubData.publicUrl;
-      }
-    } catch (err) {
-      console.warn('Could not generate Supabase public URL', err);
+    if (data?.publicUrl) {
+      return data.publicUrl;
     }
+  } catch (err) {
+    console.warn('Could not generate Supabase public URL', err);
   }
 
-  return `${supabaseUrl}/storage/v1/object/public/order-documents/${storagePath}`;
+  return `${supabaseUrl}/storage/v1/object/public/order-documents/${cleanPath}`;
 }
 

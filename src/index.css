@@ -111,8 +111,27 @@
   }
 }
 
+@keyframes logoPulse14 {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(14, 165, 233, 0));
+  }
+  50% {
+    transform: scale(1.06);
+    filter: drop-shadow(0 4px 14px rgba(14, 165, 233, 0.45));
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(14, 165, 233, 0));
+  }
+}
+
+.animate-logo-14 {
+  animation: logoPulse14 1.4s ease-in-out infinite;
+}
+
 .animate-laser-sweep {
-  animation: laserScanSweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation: laserScanSweep 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .animate-shimmer-bar {
@@ -120,6 +139,6 @@
 }
 
 .animate-pulse-glow {
-  animation: pulseGlow 2.5s ease-in-out infinite;
+  animation: pulseGlow 1.4s ease-in-out infinite;
 }
 

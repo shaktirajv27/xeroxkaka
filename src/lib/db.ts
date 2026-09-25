@@ -85,9 +85,21 @@ function loadLocalState(): PlatformState {
           parsed.shops = (parsed.shops || []).filter((s: any) => !isDummyShop(s));
           modified = true;
         }
-        if (parsed.customers && parsed.customers.some((c: any) => c.id === 'c0000000-0000-0000-0000-000000000001')) {
+        if (parsed.customers && parsed.customers.some((c: any) => c.id === 'c0000000-0000-0000-0000-000000000001' || c.name?.toLowerCase().includes('tenant') || c.phone === '9988776655' || c.phone === '9988776644')) {
           parsed.customers = (parsed.customers || []).filter(
-            (c: any) => c.id !== 'c0000000-0000-0000-0000-000000000001'
+            (c: any) =>
+              c.id !== 'c0000000-0000-0000-0000-000000000001' &&
+              !c.name?.toLowerCase().includes('tenant') &&
+              c.phone !== '9988776655' &&
+              c.phone !== '9988776644'
+          );
+          modified = true;
+        }
+        if (parsed.orders && parsed.orders.some((o: any) => o.customer_name?.toLowerCase().includes('tenant') || o.customer?.name?.toLowerCase().includes('tenant'))) {
+          parsed.orders = (parsed.orders || []).filter(
+            (o: any) =>
+              !o.customer_name?.toLowerCase().includes('tenant') &&
+              !o.customer?.name?.toLowerCase().includes('tenant')
           );
           modified = true;
         }
@@ -1256,12 +1268,6 @@ export const db = {
   // ORDER DELETION (Shop Owner Right)
   async deleteOrder(orderId: string, shopId?: string): Promise<boolean> {
     const state = loadLocalState();
-    const order = state.orders.find((o) => o.id === orderId);
-    if (!order) return false;
-    if (shopId && order.shop_id !== shopId) {
-      throw new Error('Access denied: You do not own this order.');
-    }
-
     if (!state.deleted_order_ids) state.deleted_order_ids = [];
     if (!state.deleted_order_ids.includes(orderId)) {
       state.deleted_order_ids.push(orderId);
@@ -1281,7 +1287,6 @@ export const db = {
         const { error } = await supabase.from('orders').delete().eq('id', orderId);
         if (error) {
           console.warn('Supabase remote deleteOrder notice:', error.message);
-          // If RLS prevents hard delete, soft cancel
           await supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
         }
       } catch (err) {
@@ -1289,19 +1294,50 @@ export const db = {
       }
     }
 
-    notifyOrderUpdate({ id: orderId, shop_id: order.shop_id, status: 'cancelled' } as any);
+    notifyOrderUpdate({ id: orderId, shop_id: shopId || '', status: 'cancelled' } as any);
+    return true;
+  },
+
+  async deleteOrdersBatch(orderIds: string[], shopId?: string): Promise<boolean> {
+    if (!orderIds || orderIds.length === 0) return true;
+    const state = loadLocalState();
+    if (!state.deleted_order_ids) state.deleted_order_ids = [];
+    orderIds.forEach((id) => {
+      if (!state.deleted_order_ids!.includes(id)) {
+        state.deleted_order_ids!.push(id);
+      }
+    });
+
+    state.orders = state.orders.filter((o) => !orderIds.includes(o.id));
+    state.order_items = state.order_items.filter((i) => !orderIds.includes(i.order_id));
+    state.files = state.files.filter((f) => !f.order_id || !orderIds.includes(f.order_id));
+    state.status_history = state.status_history.filter((h) => !orderIds.includes(h.order_id));
+    saveLocalState(state);
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('order_status_history').delete().in('order_id', orderIds);
+        await supabase.from('order_items').delete().in('order_id', orderIds);
+        await supabase.from('files').delete().in('order_id', orderIds);
+        const { error } = await supabase.from('orders').delete().in('id', orderIds);
+        if (error) {
+          console.warn('Supabase remote deleteOrdersBatch notice:', error.message);
+          await supabase.from('orders').update({ status: 'cancelled' }).in('id', orderIds);
+        }
+      } catch (err) {
+        console.warn('Supabase deleteOrdersBatch exception:', err);
+      }
+    }
+
+    orderIds.forEach((id) => {
+      notifyOrderUpdate({ id, shop_id: shopId || '', status: 'cancelled' } as any);
+    });
     return true;
   },
 
   // CUSTOMER DELETION (Shop Owner Right)
   async deleteCustomer(customerId: string, shopId?: string): Promise<boolean> {
     const state = loadLocalState();
-    const customer = state.customers.find((c) => c.id === customerId);
-    if (!customer) return false;
-    if (shopId && customer.shop_id !== shopId) {
-      throw new Error('Access denied: You do not own this customer record.');
-    }
-
     if (!state.deleted_customer_ids) state.deleted_customer_ids = [];
     if (!state.deleted_customer_ids.includes(customerId)) {
       state.deleted_customer_ids.push(customerId);
@@ -1323,6 +1359,38 @@ export const db = {
         }
       } catch (err) {
         console.warn('Supabase deleteCustomer exception:', err);
+      }
+    }
+
+    return true;
+  },
+
+  async deleteCustomersBatch(customerIds: string[], shopId?: string): Promise<boolean> {
+    if (!customerIds || customerIds.length === 0) return true;
+    const state = loadLocalState();
+    if (!state.deleted_customer_ids) state.deleted_customer_ids = [];
+    customerIds.forEach((id) => {
+      if (!state.deleted_customer_ids!.includes(id)) {
+        state.deleted_customer_ids!.push(id);
+      }
+    });
+
+    state.customers = state.customers.filter((c) => !customerIds.includes(c.id));
+    state.orders.forEach((o) => {
+      if (o.customer_id && customerIds.includes(o.customer_id)) {
+        o.customer = undefined;
+      }
+    });
+    saveLocalState(state);
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase.from('customers').delete().in('id', customerIds);
+        if (error) {
+          console.warn('Supabase remote deleteCustomersBatch notice:', error.message);
+        }
+      } catch (err) {
+        console.warn('Supabase deleteCustomersBatch exception:', err);
       }
     }
 

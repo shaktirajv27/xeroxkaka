@@ -93,7 +93,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-9 px-2 rounded-xl bg-white flex items-center justify-center shadow-xs border border-slate-100">
-              <img src="/logo.png" alt="PrintSetu" className="h-7 w-auto object-contain" />
+              <img src="/logo.png" alt="PrintSetu" className="h-7 w-auto object-contain animate-logo-14" />
             </div>
             <div>
               <span className="font-black text-lg text-slate-900 tracking-tight leading-none block">

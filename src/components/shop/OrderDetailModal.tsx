@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Order, OrderStatus, UploadedFile } from '../../types/database';
 import { StatusBadge } from '../common/StatusBadge';
 import { OrderTimeline } from './OrderTimeline';
-import { getAuthorizedFileUrl } from '../../lib/storage';
+import { printCustomerFile, viewCustomerFile, resolveFileUrl, createPrintJobTicketUrl } from '../../lib/printHelper';
 import {
   X,
   Phone,
@@ -14,6 +14,8 @@ import {
   Calendar,
   Trash2,
   AlertTriangle,
+  ExternalLink,
+  ZoomIn,
 } from 'lucide-react';
 
 interface OrderDetailModalProps {
@@ -34,6 +36,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const [statusNote, setStatusNote] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
 
   if (!order) return null;
 
@@ -50,136 +53,26 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     `Hello ${order.customer?.name || ''}, regarding your Xerox print order #${order.order_number}: `
   )}`;
 
-  const resolveFileUrl = async (file?: UploadedFile): Promise<string> => {
-    if (!file) return '';
-    // Priority 1: Supabase remote storage path
-    if (file.storage_path && !file.storage_path.startsWith('blob:')) {
-      const remoteUrl = await getAuthorizedFileUrl(file.storage_path);
-      if (remoteUrl) return remoteUrl;
-    }
-    // Priority 2: Remote HTTPS preview_url
-    if (file.preview_url && !file.preview_url.startsWith('blob:')) {
-      return file.preview_url;
-    }
-    // Priority 3: Data URL
-    if (file.data_url) {
-      return file.data_url;
-    }
-    // Priority 4: Local preview blob if still active
-    if (file.preview_url) {
-      return file.preview_url;
-    }
-    return '';
-  };
-
-  const createPrintJobTicketUrl = (file?: UploadedFile): string => {
-    const printJobHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Order #${order.order_number} - ${file?.original_filename || 'Print Job'}</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #0f172a; max-width: 800px; margin: auto; }
-          .header { border-bottom: 3px solid #4f46e5; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end; }
-          .order-title { font-size: 28px; font-weight: 900; color: #1e1b4b; }
-          .badge { background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 12px; text-transform: uppercase; }
-          .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
-          .spec-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px; }
-          .spec-item { padding: 12px; background: white; border-radius: 10px; border: 1px solid #e2e8f0; }
-          .spec-label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; }
-          .spec-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
-          .btn-print { background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 14px; }
-          @media print { .no-print { display: none; } body { padding: 20px; } }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <div class="order-title">Print Job #${order.order_number}</div>
-            <div style="color: #64748b; font-size: 13px; margin-top: 4px;">Created: ${new Date(order.created_at).toLocaleString()}</div>
-          </div>
-          <span class="badge">${order.priority === 'urgent' ? 'Urgent Order' : 'Standard Queue'}</span>
-        </div>
-        <div class="card">
-          <h2 style="font-size: 18px; margin: 0 0 12px 0;">Document: ${file?.original_filename || 'Customer Document'}</h2>
-          <div class="spec-grid">
-            <div class="spec-item"><div class="spec-label">Customer</div><div class="spec-val">${order.customer?.name || 'Customer'} (${order.customer?.phone || ''})</div></div>
-            <div class="spec-item"><div class="spec-label">Paper & Color</div><div class="spec-val">${order.items?.[0]?.paper_size || 'A4'} • ${order.items?.[0]?.print_color === 'bw' ? 'B&W' : 'Color'}</div></div>
-            <div class="spec-item"><div class="spec-label">Sides & Copies</div><div class="spec-val">${order.items?.[0]?.print_side === 'single' ? 'Single Sided' : 'Back-to-Back'} • ${order.items?.[0]?.copies || 1} Copies</div></div>
-            <div class="spec-item"><div class="spec-label">Total Amount</div><div class="spec-val">₹${order.total}</div></div>
-          </div>
-          ${order.customer_note ? `<div style="margin-top: 16px; padding: 12px; background: #fef3c7; border-radius: 8px; font-size: 13px; color: #92400e;"><strong>Customer Note:</strong> ${order.customer_note}</div>` : ''}
-        </div>
-        <div class="no-print" style="text-align: center; margin-top: 30px;">
-          <button class="btn-print" onclick="window.print()">Print This Job Ticket</button>
-        </div>
-        <script>setTimeout(() => window.print(), 600);</script>
-      </body>
-      </html>
-    `;
-    const blob = new Blob([printJobHtml], { type: 'text/html' });
-    return URL.createObjectURL(blob);
-  };
-
   const handlePrintDocument = async (file?: UploadedFile) => {
-    let win: Window | null = null;
-    try {
-      win = window.open('about:blank', '_blank');
-    } catch (e) {
-      console.warn('Popup blocker notice', e);
-    }
-
-    let fileUrl = await resolveFileUrl(file);
-    if (!fileUrl) {
-      fileUrl = createPrintJobTicketUrl(file);
-    }
-
-    if (fileUrl) {
-      if (win && !win.closed) {
-        win.location.href = fileUrl;
-        win.focus();
-        setTimeout(() => {
-          try { win?.print(); } catch (err) {}
-        }, 1200);
-      } else {
-        window.open(fileUrl, '_blank');
-      }
-    } else {
-      win?.close();
-      window.print();
-    }
+    await printCustomerFile(file, order);
   };
 
-  const handleViewDocument = async (file?: UploadedFile) => {
-    let win: Window | null = null;
-    try {
-      win = window.open('about:blank', '_blank');
-    } catch (e) {}
-
-    let fileUrl = await resolveFileUrl(file);
-    if (!fileUrl) {
-      fileUrl = createPrintJobTicketUrl(file);
-    }
-
-    if (fileUrl) {
-      if (win && !win.closed) {
-        win.location.href = fileUrl;
-        win.focus();
-      } else {
-        window.open(fileUrl, '_blank');
-      }
+  const handleViewDocument = (file?: UploadedFile) => {
+    // Open in-modal preview first for instant viewing
+    if (file) {
+      setPreviewFile(file);
     } else {
-      win?.close();
+      viewCustomerFile(file, order);
     }
   };
 
   const handlePrintAll = async () => {
     if (order.files && order.files.length > 0) {
       for (const f of order.files) {
-        await handlePrintDocument(f);
+        await printCustomerFile(f, order);
       }
     } else {
-      window.print();
+      await printCustomerFile(undefined, order);
     }
   };
 
@@ -301,6 +194,12 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               <div className="space-y-3">
                 {(order.items || []).map((item, idx) => {
                   const matchingFile = order.files?.find((f) => f.id === item.file_id) || order.files?.[idx];
+                  const fileUrl = resolveFileUrl(matchingFile);
+                  const isImage =
+                    matchingFile?.file_type === 'image' ||
+                    fileUrl.startsWith('data:image/') ||
+                    /\.(jpg|jpeg|png|webp|gif)$/i.test(matchingFile?.original_filename || item.file_name || '');
+
                   return (
                     <div
                       key={item.id || idx}
@@ -308,9 +207,27 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-start gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                            <FileText className="w-5 h-5" />
-                          </div>
+                          {isImage && fileUrl ? (
+                            <div
+                              onClick={() => setPreviewFile(matchingFile || ({ original_filename: item.file_name } as any))}
+                              className="w-12 h-12 rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shrink-0 cursor-pointer relative group"
+                              title="Click to view full image"
+                            >
+                              <img
+                                src={fileUrl}
+                                alt={item.file_name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                <ZoomIn className="w-4 h-4 text-white" />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                              <FileText className="w-6 h-6" />
+                            </div>
+                          )}
+
                           <div>
                             <h5 className="font-semibold text-slate-800 text-sm">
                               {item.file_name || matchingFile?.original_filename || `Document ${idx + 1}`}
@@ -357,18 +274,18 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                       <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100 text-xs">
                         <button
                           type="button"
-                          onClick={() => handleViewDocument(matchingFile)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold transition-colors"
-                          title="View and inspect document in new tab"
+                          onClick={() => setPreviewFile(matchingFile || ({ original_filename: item.file_name } as any))}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold transition-colors cursor-pointer"
+                          title="Preview and inspect document inside modal"
                         >
                           <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                          <span>View Document</span>
+                          <span>Show File</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => handlePrintDocument(matchingFile)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs transition-colors"
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xs transition-colors cursor-pointer"
                           title="Directly print this document"
                         >
                           <Printer className="w-3.5 h-3.5" />
@@ -377,17 +294,25 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
                         <button
                           type="button"
-                          onClick={async () => {
-                            const url = await resolveFileUrl(matchingFile);
-                            if (url) {
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = matchingFile?.original_filename || item.file_name || 'document';
-                              a.target = '_blank';
-                              a.click();
-                            }
+                          onClick={() => viewCustomerFile(matchingFile, order)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors cursor-pointer"
+                          title="Open document in new browser tab"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">New Tab</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = resolveFileUrl(matchingFile) || createPrintJobTicketUrl(order, matchingFile);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = matchingFile?.original_filename || item.file_name || 'document';
+                            a.target = '_blank';
+                            a.click();
                           }}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium transition-colors cursor-pointer"
                           title="Download file"
                         >
                           <Download className="w-3.5 h-3.5" />
@@ -527,6 +452,96 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Order'}</span>
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Document In-Modal Preview Lightbox */}
+        {previewFile && (
+          <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[94vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+              {/* Header */}
+              <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <FileText className="w-5 h-5 text-indigo-600 shrink-0" />
+                  <div className="min-w-0">
+                    <h4 className="font-bold text-slate-900 text-sm truncate">
+                      {previewFile.original_filename}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Order #{order.order_number} • Customer: {order.customer?.name}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrintDocument(previewFile)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+                    title="Print Document"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print File</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => viewCustomerFile(previewFile, order)}
+                    className="p-2 rounded-xl bg-slate-200/80 hover:bg-slate-300 text-slate-700 cursor-pointer"
+                    title="Open full size in separate tab"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewFile(null)}
+                    className="p-2 rounded-xl bg-slate-200/80 hover:bg-slate-300 text-slate-700 cursor-pointer"
+                    title="Close preview"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Document Body */}
+              <div className="p-3 sm:p-5 flex-1 overflow-auto flex items-center justify-center bg-slate-900/5 min-h-[50vh]">
+                {(() => {
+                  const url = resolveFileUrl(previewFile);
+                  const isImg =
+                    previewFile.file_type === 'image' ||
+                    url.startsWith('data:image/') ||
+                    /\.(jpg|jpeg|png|webp|gif)$/i.test(previewFile.original_filename || '');
+
+                  if (url && isImg) {
+                    return (
+                      <div className="flex flex-col items-center">
+                        <img
+                          src={url}
+                          alt={previewFile.original_filename}
+                          className="max-h-[68vh] max-w-full rounded-xl object-contain shadow-md"
+                        />
+                      </div>
+                    );
+                  }
+
+                  if (url) {
+                    return (
+                      <iframe
+                        src={url}
+                        title={previewFile.original_filename}
+                        className="w-full h-[68vh] rounded-xl border border-slate-200 bg-white"
+                      />
+                    );
+                  }
+
+                  return (
+                    <iframe
+                      src={createPrintJobTicketUrl(order, previewFile)}
+                      title="Job Ticket"
+                      className="w-full h-[68vh] rounded-xl border border-slate-200 bg-white"
+                    />
+                  );
+                })()}
               </div>
             </div>
           </div>

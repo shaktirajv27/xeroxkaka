@@ -205,26 +205,23 @@ export const ShopOrderPage: React.FC<ShopOrderPageProps> = ({
     setIsSubmitting(true);
 
     try {
-      // Ensure any pending uploads are completed in parallel
+      // Ensure all customer files are uploaded to Supabase Storage before order creation
       await Promise.all(
         uploadedItems.map(async (item) => {
-          if (!item.upload.storage_path || item.upload.storage_path.startsWith('blob:')) {
-            try {
-              const uploadedPath = await uploadOrderFile(item.upload.file, item.upload.storage_path, shop.slug);
-              if (uploadedPath) {
-                item.upload.storage_path = uploadedPath;
-                if (!uploadedPath.startsWith('blob:')) {
-                  const supabaseUrl =
-                    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
-                    'https://rjlfuefvovyqflctqvis.supabase.co';
-                  item.upload.preview_url = uploadedPath.startsWith('http')
-                    ? uploadedPath
-                    : `${supabaseUrl}/storage/v1/object/public/order-documents/${uploadedPath}`;
-                }
-              }
-            } catch (e) {
-              console.warn('File upload finalize notice:', e);
+          try {
+            const uploadedPath = await uploadOrderFile(item.upload.file, item.upload.storage_path, shop.slug);
+            if (uploadedPath) {
+              item.upload.storage_path = uploadedPath;
+              const supabaseUrl =
+                (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
+                'https://rjlfuefvovyqflctqvis.supabase.co';
+              const cleanPath = uploadedPath.replace(/^\/+/, '');
+              item.upload.preview_url = uploadedPath.startsWith('http')
+                ? uploadedPath
+                : `${supabaseUrl}/storage/v1/object/public/order-documents/${cleanPath}`;
             }
+          } catch (e) {
+            console.warn('File upload finalize notice:', e);
           }
         })
       );

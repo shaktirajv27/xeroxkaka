@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { db, generateUUID, REAL_PRINTSETU_SHOP } from './db';
 
 describe('Multi-Tenant Isolation & Security', () => {
@@ -108,4 +108,17 @@ describe('Multi-Tenant Isolation & Security', () => {
     const hackerTrack = await db.trackCustomerOrder(orderA.order_number, '9111111111');
     expect(hackerTrack).toBeNull();
   });
+
+  afterAll(async () => {
+    // Clean up test orders & test customer profiles so zero test data remains
+    try {
+      if (orderA?.id) await db.deleteOrder(orderA.id, shopA?.id);
+      if (orderB?.id) await db.deleteOrder(orderB.id, shopA?.id);
+      if (orderA?.customer_id) await db.deleteCustomer(orderA.customer_id, shopA?.id);
+      if (orderB?.customer_id) await db.deleteCustomer(orderB.customer_id, shopA?.id);
+    } catch (e) {
+      console.warn('Test cleanup notice:', e);
+    }
+  });
 });
+

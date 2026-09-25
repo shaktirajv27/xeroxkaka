@@ -1,7 +1,7 @@
 import React from 'react';
 import { Order, OrderStatus, UploadedFile } from '../../types/database';
 import { StatusBadge } from '../common/StatusBadge';
-import { getAuthorizedFileUrl } from '../../lib/storage';
+import { printCustomerFile, viewCustomerFile } from '../../lib/printHelper';
 import { Play, CheckCircle2, Eye, Printer, Phone, Clock, FileText, ExternalLink } from 'lucide-react';
 
 interface PrintQueueCardProps {
@@ -28,108 +28,14 @@ export const PrintQueueCard: React.FC<PrintQueueCardProps> = ({
     0
   );
 
-  const openDocument = async (file?: UploadedFile) => {
-    // Open a window immediately to guarantee browser popup blocker will not block it
-    let win: Window | null = null;
-    try {
-      win = window.open('about:blank', '_blank');
-    } catch (e) {
-      console.warn('Popup blocker notice:', e);
-    }
-
-    let targetUrl = '';
-    // Priority 1: Supabase remote storage URL if present
-    if (file?.storage_path && !file.storage_path.startsWith('blob:')) {
-      targetUrl = await getAuthorizedFileUrl(file.storage_path);
-    }
-    // Priority 2: Remote HTTPS preview URL
-    if (!targetUrl && file?.preview_url && !file.preview_url.startsWith('blob:')) {
-      targetUrl = file.preview_url;
-    }
-    // Priority 3: Data URL
-    if (!targetUrl && file?.data_url) {
-      targetUrl = file.data_url;
-    }
-    // Priority 4: Local preview blob if still active
-    if (!targetUrl && file?.preview_url) {
-      targetUrl = file.preview_url;
-    }
-
-    if (targetUrl) {
-      if (win && !win.closed) {
-        win.location.href = targetUrl;
-        win.focus();
-        setTimeout(() => {
-          try { win?.print(); } catch (err) {}
-        }, 1200);
-      } else {
-        window.open(targetUrl, '_blank');
-      }
-    } else {
-      // Printable job summary ticket fallback
-      const printJobHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Order #${order.order_number} - ${file?.original_filename || 'Print Job'}</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #0f172a; max-width: 800px; margin: auto; }
-            .header { border-bottom: 3px solid #4f46e5; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end; }
-            .order-title { font-size: 28px; font-weight: 900; color: #1e1b4b; }
-            .badge { background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 12px; text-transform: uppercase; }
-            .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
-            .spec-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px; }
-            .spec-item { padding: 12px; background: white; border-radius: 10px; border: 1px solid #e2e8f0; }
-            .spec-label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; }
-            .spec-val { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 2px; }
-            .btn-print { background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 14px; }
-            @media print { .no-print { display: none; } body { padding: 20px; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <div class="order-title">Print Job #${order.order_number}</div>
-              <div style="color: #64748b; font-size: 13px; margin-top: 4px;">Created: ${new Date(order.created_at).toLocaleString()}</div>
-            </div>
-            <span class="badge">${order.priority === 'urgent' ? 'Urgent Order' : 'Standard Queue'}</span>
-          </div>
-          <div class="card">
-            <h2 style="font-size: 18px; margin: 0 0 12px 0;">Document: ${file?.original_filename || 'Customer Document'}</h2>
-            <div class="spec-grid">
-              <div class="spec-item"><div class="spec-label">Customer</div><div class="spec-val">${order.customer?.name || 'Customer'} (${order.customer?.phone || ''})</div></div>
-              <div class="spec-item"><div class="spec-label">Paper & Color</div><div class="spec-val">${order.items?.[0]?.paper_size || 'A4'} • ${order.items?.[0]?.print_color === 'bw' ? 'B&W' : 'Color'}</div></div>
-              <div class="spec-item"><div class="spec-label">Sides & Copies</div><div class="spec-val">${order.items?.[0]?.print_side === 'single' ? 'Single Sided' : 'Back-to-Back'} • ${order.items?.[0]?.copies || 1} Copies</div></div>
-              <div class="spec-item"><div class="spec-label">Total Amount</div><div class="spec-val">₹${order.total}</div></div>
-            </div>
-            ${order.customer_note ? `<div style="margin-top: 16px; padding: 12px; background: #fef3c7; border-radius: 8px; font-size: 13px; color: #92400e;"><strong>Customer Note:</strong> ${order.customer_note}</div>` : ''}
-          </div>
-          <div class="no-print" style="text-align: center; margin-top: 30px;">
-            <button class="btn-print" onclick="window.print()">Print This Job Ticket</button>
-          </div>
-          <script>setTimeout(() => window.print(), 600);</script>
-        </body>
-        </html>
-      `;
-      const blob = new Blob([printJobHtml], { type: 'text/html' });
-      const fallbackUrl = URL.createObjectURL(blob);
-      if (win && !win.closed) {
-        win.location.href = fallbackUrl;
-        win.focus();
-      } else {
-        window.open(fallbackUrl, '_blank');
-      }
-    }
+  const openDocument = (file?: UploadedFile) => {
+    viewCustomerFile(file, order);
   };
 
   const handleStartPrinting = async () => {
     onUpdateStatus(order.id, 'printing', 'Started printing order');
     const firstFile = order.files?.[0];
-    if (firstFile) {
-      await openDocument(firstFile);
-    } else {
-      await openDocument();
-    }
+    await printCustomerFile(firstFile, order);
   };
 
   return (

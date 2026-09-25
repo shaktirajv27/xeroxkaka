@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { PricingRule, PaperSize } from '../../types/database';
+import { DEFAULT_PRICING_RULES } from '../../lib/priceEngine';
 import { db } from '../../lib/db';
-import { Save, CheckCircle2, Layers, Check } from 'lucide-react';
+import { Save, CheckCircle2, Layers, Check, RotateCcw } from 'lucide-react';
 
 interface PricingEditorProps {
   shopId: string;
@@ -18,20 +19,45 @@ const PAPER_DETAILS: Record<PaperSize, { label: string; desc: string; dimensions
 };
 
 export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onRefresh }) => {
-  const [localRules, setLocalRules] = useState<PricingRule[]>(rules);
+  const paperSizes: PaperSize[] = ['A4', 'A3', 'A5', 'Legal', 'Letter'];
+  const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
   const [availableSizes, setAvailableSizes] = useState<PaperSize[]>(() => db.getCachedAvailablePaperSizes(shopId));
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const paperSizes: PaperSize[] = ['A4', 'A3', 'A5', 'Legal', 'Letter'];
-
   useEffect(() => {
     async function loadSizes() {
       const sizes = await db.getAvailablePaperSizes(shopId);
-      setAvailableSizes(sizes);
+      if (sizes && sizes.length > 0) {
+        setAvailableSizes(sizes);
+      }
     }
     loadSizes();
   }, [shopId]);
+
+  // Sync inputs whenever incoming rules change
+  useEffect(() => {
+    const inputs: Record<string, string> = {};
+    paperSizes.forEach((paper) => {
+      (['bw', 'color'] as const).forEach((color) => {
+        (['single', 'double'] as const).forEach((side) => {
+          const key = `${paper}-${color}-${side}`;
+          const found = rules.find(
+            (r) => r.paper_size === paper && r.print_color === color && r.print_side === side
+          );
+          if (found && found.price_per_page !== undefined && found.price_per_page !== null) {
+            inputs[key] = String(found.price_per_page);
+          } else {
+            const def = DEFAULT_PRICING_RULES.find(
+              (d) => d.paper_size === paper && d.print_color === color && d.print_side === side
+            );
+            inputs[key] = def ? String(def.price_per_page) : '2';
+          }
+        });
+      });
+    });
+    setPriceInputs(inputs);
+  }, [rules]);
 
   const handleToggleSize = (size: PaperSize) => {
     setAvailableSizes((prev) => {
@@ -44,51 +70,64 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
     });
   };
 
-  const getPrice = (paper: PaperSize, color: 'bw' | 'color', side: 'single' | 'double') => {
-    const r = localRules.find(
-      (rule) => rule.paper_size === paper && rule.print_color === color && rule.print_side === side
-    );
-    return r ? r.price_per_page : 0;
-  };
-
   const handlePriceChange = (
     paper: PaperSize,
     color: 'bw' | 'color',
     side: 'single' | 'double',
-    newPrice: number
+    val: string
   ) => {
-    setLocalRules((prev) => {
-      const idx = prev.findIndex(
-        (rule) => rule.paper_size === paper && rule.print_color === color && rule.print_side === side
-      );
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = { ...copy[idx], price_per_page: newPrice };
-        return copy;
-      } else {
-        return [
-          ...prev,
-          {
-            id: `rule-${paper}-${color}-${side}`,
-            shop_id: shopId,
-            paper_size: paper,
-            print_color: color,
-            print_side: side,
-            price_per_page: newPrice,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ];
-      }
+    const key = `${paper}-${color}-${side}`;
+    setPriceInputs((prev) => ({ ...prev, [key]: val }));
+  };
+
+  const handleResetDefaults = () => {
+    const inputs: Record<string, string> = {};
+    paperSizes.forEach((paper) => {
+      (['bw', 'color'] as const).forEach((color) => {
+        (['single', 'double'] as const).forEach((side) => {
+          const key = `${paper}-${color}-${side}`;
+          const def = DEFAULT_PRICING_RULES.find(
+            (d) => d.paper_size === paper && d.print_color === color && d.print_side === side
+          );
+          inputs[key] = def ? String(def.price_per_page) : '2';
+        });
+      });
     });
+    setPriceInputs(inputs);
   };
 
   const handleSave = async () => {
     setIsSaving(true);
     setSavedSuccess(false);
     try {
+      const rulesToSave: PricingRule[] = [];
+      paperSizes.forEach((paper) => {
+        (['bw', 'color'] as const).forEach((color) => {
+          (['single', 'double'] as const).forEach((side) => {
+            const key = `${paper}-${color}-${side}`;
+            const raw = priceInputs[key];
+            const parsed = parseFloat(raw);
+            const def = DEFAULT_PRICING_RULES.find(
+              (d) => d.paper_size === paper && d.print_color === color && d.print_side === side
+            );
+            const fallback = def ? def.price_per_page : 2;
+            const finalPrice = isNaN(parsed) || parsed < 0 ? fallback : parsed;
+            rulesToSave.push({
+              id: `rule-${shopId}-${paper}-${color}-${side}`,
+              shop_id: shopId,
+              paper_size: paper,
+              print_color: color,
+              print_side: side,
+              price_per_page: finalPrice,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          });
+        });
+      });
+
       await Promise.all([
-        db.updatePricingRulesBatch(shopId, localRules),
+        db.updatePricingRulesBatch(shopId, rulesToSave),
         db.updateAvailablePaperSizes(shopId, availableSizes),
       ]);
       setSavedSuccess(true);
@@ -111,27 +150,39 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={isSaving}
-          className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs disabled:opacity-50 cursor-pointer transition-all"
-        >
-          {savedSuccess ? (
-            <>
-              <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-              <span>Saved Successfully!</span>
-            </>
-          ) : (
-            <>
-              <Save className="w-4 h-4" />
-              <span>{isSaving ? 'Saving...' : 'Save Paper & Rates'}</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer transition-all"
+            title="Reset to recommended standard prices"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden sm:inline">Reset Defaults</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50 cursor-pointer transition-all"
+          >
+            {savedSuccess ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                <span>Saved Successfully!</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                <span>{isSaving ? 'Saving...' : 'Save Paper & Rates'}</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Offered Paper Sizes Selector (Like Finishing Services) */}
+      {/* Offered Paper Sizes Selector */}
       <div className="space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -214,15 +265,11 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
                     <div className="flex items-center gap-1">
                       <span className="text-slate-400 font-medium">₹</span>
                       <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                        type="text"
                         disabled={!isOffered}
-                        value={getPrice(size, 'bw', 'single')}
-                        onChange={(e) =>
-                          handlePriceChange(size, 'bw', 'single', parseFloat(e.target.value) || 0)
-                        }
-                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
+                        value={priceInputs[`${size}-bw-single`] ?? '2'}
+                        onChange={(e) => handlePriceChange(size, 'bw', 'single', e.target.value)}
+                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </td>
@@ -230,15 +277,11 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
                     <div className="flex items-center gap-1">
                       <span className="text-slate-400 font-medium">₹</span>
                       <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                        type="text"
                         disabled={!isOffered}
-                        value={getPrice(size, 'bw', 'double')}
-                        onChange={(e) =>
-                          handlePriceChange(size, 'bw', 'double', parseFloat(e.target.value) || 0)
-                        }
-                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
+                        value={priceInputs[`${size}-bw-double`] ?? '1.5'}
+                        onChange={(e) => handlePriceChange(size, 'bw', 'double', e.target.value)}
+                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </td>
@@ -246,15 +289,11 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
                     <div className="flex items-center gap-1">
                       <span className="text-slate-400 font-medium">₹</span>
                       <input
-                        type="number"
-                        step="0.5"
-                        min="0"
+                        type="text"
                         disabled={!isOffered}
-                        value={getPrice(size, 'color', 'single')}
-                        onChange={(e) =>
-                          handlePriceChange(size, 'color', 'single', parseFloat(e.target.value) || 0)
-                        }
-                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-indigo-700 disabled:bg-slate-100 disabled:text-slate-400"
+                        value={priceInputs[`${size}-color-single`] ?? '10'}
+                        onChange={(e) => handlePriceChange(size, 'color', 'single', e.target.value)}
+                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </td>
@@ -262,15 +301,11 @@ export const PricingEditor: React.FC<PricingEditorProps> = ({ shopId, rules, onR
                     <div className="flex items-center gap-1">
                       <span className="text-slate-400 font-medium">₹</span>
                       <input
-                        type="number"
-                        step="0.5"
-                        min="0"
+                        type="text"
                         disabled={!isOffered}
-                        value={getPrice(size, 'color', 'double')}
-                        onChange={(e) =>
-                          handlePriceChange(size, 'color', 'double', parseFloat(e.target.value) || 0)
-                        }
-                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-indigo-700 disabled:bg-slate-100 disabled:text-slate-400"
+                        value={priceInputs[`${size}-color-double`] ?? '7.5'}
+                        onChange={(e) => handlePriceChange(size, 'color', 'double', e.target.value)}
+                        className="w-20 p-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </td>
